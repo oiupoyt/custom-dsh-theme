@@ -1,0 +1,4 @@
+# Personal theme bundle: one Client row, inserted into the web roster.
+- insert:
+    - id: custom-dsh-theme
+      name: 'custom-dsh-theme'
