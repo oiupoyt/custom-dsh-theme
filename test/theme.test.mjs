@@ -270,6 +270,26 @@ test('calm motion keeps genuine progress indicators alive', async () => {
   )
 })
 
+test('calm motion leaves the text caret blinking, and never touches its glide', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+
+  // The caret is an editing cue like a progressbar: stopping its blink makes a
+  // focused field look idle. The glide is a `transition`, so calm must not
+  // reach for transition-duration outside the reduced-motion block.
+  const calm = rules(css).filter((r) => /data-kat-motion="calm"/.test(r.selector))
+  for (const rule of calm) {
+    assert.ok(
+      !/transition/.test(rule.body),
+      `calm must not override transitions (breaks the caret glide): ${rule.selector.slice(0, 70)}`,
+    )
+  }
+  assert.ok(
+    !/\[data-dsh-claude-caret\]/.test(css),
+    'the blinking element is the caret layer, not the hidden native caret',
+  )
+})
+
 test('mono chrome and sans prose are wired to host font tokens', async () => {
   const { calls } = await boot()
   const t = calls.tokens[0].tokens

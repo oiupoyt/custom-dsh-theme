@@ -271,7 +271,6 @@ ${K} :where(button,a,input,textarea,select,[role="button"],[role="option"],[role
   transition:background-color .15s ease,border-color .15s ease,color .15s ease,opacity .15s ease;
 }
 
-html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [data-dsh-claude-caret],
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [data-dsh-claude-context-meter]{
   animation:none !important;
 }
@@ -289,7 +288,8 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [role="progressbar"]::after,
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"],
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"]::before,
-html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"]::after{
+html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"]::after,
+html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [data-dsh-claude-caret-layer]{
   animation-iteration-count:infinite !important;
 }
 
