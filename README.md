@@ -3,9 +3,7 @@
 A personal theme for the DeepSeek Harness web GUI. Not a product, not a
 marketplace plugin, and not affiliated with DeepSeek.
 
-Black, square, mono, quiet. It sits beside [dsh-claude-style] and repaints it:
-you keep that plugin's composer, popovers, navigator, mascot and motion, but the
-board underneath becomes this one.
+Black, square, mono, quiet.
 
 [dsh-claude-style]: https://github.com/Nwflower/dsh-claude-style
 
