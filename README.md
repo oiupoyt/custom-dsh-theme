@@ -5,8 +5,6 @@ marketplace plugin, and not affiliated with DeepSeek.
 
 Black, square, mono, quiet.
 
-[dsh-claude-style]: https://github.com/Nwflower/dsh-claude-style
-
 ## What it changes
 
 - **Colour.** True black ground, `#0e0e0e` panels, `#1f1f1f` hairlines. Sky is
@@ -19,6 +17,9 @@ Black, square, mono, quiet.
   snappy. Progress indicators keep spinning so loading never looks finished.
 
 Both light and dark are supported. Dark is the intended look.
+
+![dark](docs/preview-dark.png)
+![light](docs/preview-light.png)
 
 ## Install
 
