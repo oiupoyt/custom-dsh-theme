@@ -288,6 +288,18 @@ test('calm motion leaves the text caret blinking, and never touches its glide', 
     !/\[data-dsh-claude-caret\]/.test(css),
     'the blinking element is the caret layer, not the hidden native caret',
   )
+  // Calm zeroes every infinite animation, so the caret layer has to be named in
+  // the re-arm block. Asserting only the absence of a stray selector lets the
+  // blanket rule win and the caret go still.
+  const rearmed = calm.filter(
+    (r) =>
+      /\[data-dsh-claude-caret-layer\]/.test(r.selector) &&
+      /animation-iteration-count:\s*infinite/.test(r.body),
+  )
+  assert.ok(
+    rearmed.length > 0,
+    'calm must re-arm the caret layer to infinite, or a focused field looks idle',
+  )
 })
 
 test('mono chrome and sans prose are wired to host font tokens', async () => {
@@ -325,6 +337,21 @@ test('drives prose through the variable claude-style actually reads', async () =
   // must move that variable, not just declare a font stack.
   assert.match(css, /--dsh-claude-font-prose/)
   assert.match(css, /data-kat-prose="mono"[^}]*--dsh-claude-font-prose/)
+  // The default path matters as much as the switch: claude-style reads its own
+  // token unconditionally, so the base block has to bind it or prose stays
+  // serif no matter what the host markdown token says.
+  const base = rules(css).filter((r) => /^body\[data-kat-theme\]$/.test(r.selector))
+  assert.ok(base.length > 0, 'the base theme block must exist')
+  assert.match(
+    base[0].body,
+    /--dsh-claude-font-prose:\s*var\(--kat-font-prose\)/,
+    'the base block must bind claude-style prose to the prose stack',
+  )
+  assert.match(
+    base[0].body,
+    /--dsh-claude-font-serif:\s*var\(--kat-font-prose\)/,
+    'serif must be bound too, since claude-style may prefer it',
+  )
 })
 
 test('registers the settings page with its five controls', async () => {
