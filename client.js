@@ -341,7 +341,38 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       }
       paint()
 
-      let disposeLayer = ctx.theme.overrideTokens(SOURCE, buildTokens(prefs.accent))
+      // buildTokens is pure per accent, and the re-assert path runs on every
+      // host theme change; memoise so a scheme flip costs no rebuild.
+      const tokenCache = new Map()
+      const tokensFor = (accent) => {
+        if (!tokenCache.has(accent)) tokenCache.set(accent, buildTokens(accent))
+        return tokenCache.get(accent)
+      }
+
+      let disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent))
+
+      // The host presenter owns the body's inline custom properties and
+      // rewrites them wholesale from the snapshot it is handed. If our layer
+      // ever drops out of that snapshot (a re-mount, a stale presenter pass)
+      // the whole skin silently reverts to host paint, so re-assert instead of
+      // assuming our first registration survives.
+      const stackLayer = () => {
+        disposeLayer()
+        disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent))
+      }
+      const snapshotKeepsLayer = (snapshot) => {
+        const tokens = snapshot?.active?.tokens
+        if (tokens === undefined) return false
+        const scheme = snapshot.active.colorScheme === 'light' ? 'light' : 'dark'
+        for (const [name, pair] of Object.entries(tokensFor(prefs.accent))) {
+          if (tokens[name] !== pair[scheme]) return false
+        }
+        return true
+      }
+      const offTheme = ctx.on('theme/change', (snapshot) => {
+        if (snapshotKeepsLayer(snapshot)) return
+        stackLayer()
+      })
 
       // The stylesheet is owned here, not by a service: a static bundle has no
       // `styles` builtin, and reading an undeclared service throws.
@@ -350,13 +381,16 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       document.head.appendChild(sheet)
       const disposeSheet = () => sheet.remove()
 
+      // Always restack, even for the accent already in force: this is the one
+      // public path a caller can use to heal a dropped layer by hand.
       const setAccent = (next) => {
-        if (!ACCENTS[next] || next === prefs.accent) return
-        prefs.accent = next
-        disposeLayer()
-        disposeLayer = ctx.theme.overrideTokens(SOURCE, buildTokens(next))
+        if (!ACCENTS[next]) return
+        if (next !== prefs.accent) {
+          prefs.accent = next
+          writePrefs(store, prefs)
+        }
+        stackLayer()
         paint()
-        writePrefs(store, prefs)
       }
 
       const setPref = (key, value) => {
@@ -368,8 +402,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
 
       const reset = () => {
         Object.assign(prefs, DEFAULTS)
-        disposeLayer()
-        disposeLayer = ctx.theme.overrideTokens(SOURCE, buildTokens(prefs.accent))
+        stackLayer()
         paint()
         try {
           store.removeItem(PREF_KEY)
@@ -380,6 +413,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
 
       ctx.effect(
         () => () => {
+          offTheme()
           disposeLayer()
           disposeSheet()
           for (const name of SWITCHES) body.removeAttribute(name)

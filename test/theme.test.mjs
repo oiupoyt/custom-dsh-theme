@@ -41,7 +41,7 @@ const CLAUDE_PROSE_DECL_WEIGHT = specificity('body[data-dsh-claude-style][data-d
 async function boot() {
   const source = await readFile(path.join(ROOT, 'client.js'), 'utf8')
   let registration = null
-  const calls = { tokens: [], css: [], slots: [], attrs: [], events: [] }
+  const calls = { tokens: [], css: [], slots: [], attrs: [], events: [], disposers: [] }
 
   const bodyAttrs = new Map()
   const documentStub = {
@@ -122,10 +122,18 @@ async function boot() {
 
   const ctx = {
     get: () => undefined,
-    on: () => () => {},
+    on: (name, fn) => {
+      const entry = { name, fn, off: false }
+      calls.events.push(entry)
+      return () => {
+        entry.off = true
+      }
+    },
     effect: (fn) => {
       const dispose = fn()
-      return typeof dispose === 'function' ? dispose : () => {}
+      const run = typeof dispose === 'function' ? dispose : () => {}
+      calls.disposers.push(run)
+      return run
     },
     theme: {
       overrideTokens(source, tokens) {
@@ -538,6 +546,43 @@ test('never touches a service it did not declare', async () => {
   })
 
   assert.doesNotThrow(() => mod.apply(guarded), 'apply must survive a strict loader context')
+})
+
+test('re-asserts the token layer when the host snapshot stops carrying it', async () => {
+  const { calls } = await boot()
+  const handler = calls.events.find((event) => event.name === 'theme/change')
+  assert.ok(handler, 'the skin must subscribe to theme/change')
+
+  const before = calls.tokens.length
+  handler.fn({ preference: 'dark', active: { colorScheme: 'dark', tokens: {} } })
+  assert.ok(calls.tokens.length > before, 'a layer the host dropped must be re-asserted')
+
+  const restored = calls.tokens[calls.tokens.length - 1]
+  assert.equal(restored.source, 'custom-dsh-theme')
+  assert.equal(restored.tokens['--dsw-alias-label-tertiary'].dark, '#8a8a8a')
+})
+
+test('leaves an intact layer alone so a scheme flip does not thrash', async () => {
+  const { calls } = await boot()
+  const handler = calls.events.find((event) => event.name === 'theme/change')
+  const layer = calls.tokens[0]
+  const sentinel = '--dsw-alias-label-tertiary'
+
+  const composed = Object.fromEntries(
+    Object.entries(layer.tokens).map(([name, pair]) => [name, pair.light]),
+  )
+
+  const before = calls.tokens.length
+  handler.fn({ preference: 'light', active: { colorScheme: 'light', tokens: composed } })
+  assert.equal(calls.tokens.length, before, 'an intact layer must not be restacked')
+})
+
+test('teardown releases the theme/change subscription', async () => {
+  const { calls } = await boot()
+  const handler = calls.events.find((event) => event.name === 'theme/change')
+  for (const dispose of calls.disposers) dispose()
+
+  assert.equal(handler.off, true, 'the subscription must be released on teardown')
 })
 
 test('avatar circles are not exempt from the square rule', async () => {
