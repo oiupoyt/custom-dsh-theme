@@ -231,6 +231,8 @@ body[data-kat-theme]{
   --kat-font-prose:var(--kat-font-sans);
   --kat-prose-gap:18px;
   --kat-row-pad:9px;
+  --kat-spin-on:var(--dsw-alias-label-primary,#f2f2f2);
+  --kat-spin-off:color-mix(in srgb,var(--dsw-alias-label-primary,#f2f2f2) 18%,transparent);
 }
 /* claude-style declares its own prose variables on a two-attribute body
    selector, so a plain body block loses the cascade and prose stays serif.
@@ -292,9 +294,72 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"],
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"]::before,
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [aria-busy="true"]::after,
+html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] svg[data-state="ongoing"],
+html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] svg[data-state="ongoing"]::before,
+html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] svg[data-state="ongoing"]::after,
 html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="calm"] [data-dsh-claude-caret-layer]{
   animation-iteration-count:infinite !important;
 }
+
+/* Working-session spinner: claude rotates a plain round ring; the square
+   signature replaces it with a chase. One bright edge of the square steps
+   around the perimeter, so the motion reads as a running light, not a
+   spinner. The square rule already flattens its radius to zero. */
+@keyframes kat-spin-chase{
+  0%,100%{border-color:var(--kat-spin-on) var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-off)}
+  25%{border-color:var(--kat-spin-off) var(--kat-spin-on) var(--kat-spin-off) var(--kat-spin-off)}
+  50%{border-color:var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-on) var(--kat-spin-off)}
+  75%{border-color:var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-on)}
+}
+${K} svg[data-state="ongoing"]{
+  animation:kat-spin-chase 1.2s linear infinite;
+  border-radius:var(--kat-radius) !important;
+}
+
+/* Effort picker, list form: the host vertical radio menu becomes a
+   horizontal segmented bar. The sliding pill is injected by the enhancer in
+   apply(); with no JavaScript the checked option still carries the accent
+   text colour, so the bar degrades rather than breaking. */
+${K} [data-kat-effort-bar]{
+  display:flex;flex-direction:row;align-items:stretch;gap:0;
+  min-width:min(348px,calc(100vw - 16px));
+}
+${K} [data-kat-effort-bar] [role="menuitemradio"]{
+  flex:1 1 0;min-width:0;position:relative;z-index:1;padding:8px 2px;text-align:center;
+  font-size:12px;transition:color .18s ease;
+}
+${K} [data-kat-effort-bar] [role="menuitemradio"][aria-checked="true"]{
+  color:var(--dsw-alias-label-primary,#f2f2f2);
+}
+${K} [data-kat-effort-bar] [role="menuitemradio"]:focus-visible{
+  outline:2px solid var(--dsw-alias-brand-primary,#7dd3fc);
+  outline-offset:-2px;
+}
+${K} .kat-effort-pill{
+  position:absolute;left:0;top:0;z-index:0;pointer-events:none;
+  background:var(--dsw-alias-interactive-bg-hover-accent,#7dd3fc29);
+  border:1px solid var(--dsw-alias-brand-primary,#7dd3fc);
+  transition:transform .28s cubic-bezier(.34,1.56,.64,1),width .28s cubic-bezier(.34,1.56,.64,1);
+}
+
+/* Effort picker, slider form (apex models): accent fill on a hairline
+   track, LED ticks, and a knob that travels with an overshoot ease so it
+   settles with a pop instead of gliding flat. */
+${K} .dsh-claude-effort-track:before{
+  background:var(--dsw-alias-bg-layer-1,#0a0a0a);
+  border:1px solid var(--dsw-alias-border-l1,#1f1f1f);
+}
+${K} .dsh-claude-effort-fill{
+  background:var(--dsw-alias-brand-primary,#7dd3fc);
+  transition:width .22s cubic-bezier(.34,1.56,.64,1),opacity .18s ease;
+}
+${K} .dsh-claude-effort-knob{
+  background:var(--dsw-alias-bg-layer-3,#131313);
+  border:1px solid var(--dsw-alias-border-l3,#2a2a2a);
+  box-shadow:0 1px 3px #0000008c;
+  transition:translate .22s cubic-bezier(.34,1.56,.64,1),scale .12s ease,background-color .3s ease,box-shadow .3s ease;
+}
+${K} .dsh-claude-effort-tick{background:var(--dsw-alias-label-tertiary,#8a8a8a)}
 
 @media (prefers-reduced-motion: reduce){
   html:root body[data-kat-theme] *,
@@ -306,6 +371,11 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
   }
   html:root body[data-kat-theme] [role="progressbar"],
   html:root body[data-kat-theme] [aria-busy="true"]{
+    animation-duration:1.6s !important;
+    animation-iteration-count:infinite !important;
+  }
+  html:root body[data-kat-theme] svg[data-state="ongoing"]{
+    animation-name:kat-spin-chase !important;
     animation-duration:1.6s !important;
     animation-iteration-count:infinite !important;
   }
@@ -381,6 +451,82 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       document.head.appendChild(sheet)
       const disposeSheet = () => sheet.remove()
 
+      // Effort picker, list form: a MutationObserver finds the host's effort
+      // radio menu, marks it, and keeps a sliding pill under the checked
+      // option. Presentational only: clicks and keyboard still run through
+      // the native menuitems. The permission popover and any menu that is
+      // not the effort list are left alone, and a shape we do not recognise
+      // degrades to the styled bar without a pill.
+      const stopEffortBars = (() => {
+        try {
+          if (typeof MutationObserver === 'undefined') return () => {}
+          if (!document || typeof document.querySelectorAll !== 'function' || !document.body) return () => {}
+
+          const marked = new WeakSet()
+          const paint = (menu) => {
+            if (!menu || menu.isConnected === false) return
+            const radios = [...menu.querySelectorAll('[role="menuitemradio"]')]
+            if (!radios.length) return
+            if (menu.closest && menu.closest('.dsh-claude-perm-popover')) return
+            if (!radios.some((r) => /default|low|medium|high/i.test(r.textContent || ''))) return
+            if (!marked.has(menu)) {
+              marked.add(menu)
+              menu.setAttribute('data-kat-effort-bar', '')
+            }
+            let pill = menu.querySelector('.kat-effort-pill')
+            if (!pill) {
+              pill = document.createElement('div')
+              pill.className = 'kat-effort-pill'
+              pill.setAttribute('aria-hidden', 'true')
+              menu.appendChild(pill)
+            }
+            const active = radios.find((r) => r.getAttribute('aria-checked') === 'true')
+            if (!active) {
+              if (pill.style.opacity !== '0') pill.style.opacity = '0'
+              return
+            }
+            const next = {
+              transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
+              width: `${active.offsetWidth}px`,
+              height: `${active.offsetHeight}px`,
+              opacity: '1',
+            }
+            // Write only on change: the observer watches mutations, so an
+            // unconditional write would retrigger itself forever.
+            for (const [key, value] of Object.entries(next)) {
+              if (pill.style[key] !== value) pill.style[key] = value
+            }
+          }
+          const repaint = () => {
+            for (const menu of document.querySelectorAll('[role="menu"]')) {
+              try {
+                paint(menu)
+              } catch {
+                /* one bad menu must not break the rest */
+              }
+            }
+          }
+          repaint()
+          const observer = new MutationObserver(repaint)
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['aria-checked', 'class', 'style'],
+          })
+          return () => {
+            observer.disconnect()
+            for (const menu of document.querySelectorAll('[data-kat-effort-bar]')) {
+              const pill = menu.querySelector('.kat-effort-pill')
+              if (pill) pill.remove()
+              menu.removeAttribute('data-kat-effort-bar')
+            }
+          }
+        } catch {
+          return () => {}
+        }
+      })()
+
       // Always restack, even for the accent already in force: this is the one
       // public path a caller can use to heal a dropped layer by hand.
       const setAccent = (next) => {
@@ -414,6 +560,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       ctx.effect(
         () => () => {
           offTheme()
+          stopEffortBars()
           disposeLayer()
           disposeSheet()
           for (const name of SWITCHES) body.removeAttribute(name)

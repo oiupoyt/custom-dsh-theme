@@ -297,7 +297,9 @@ function rules(css) {
 }
 
 const isProgressSelector = (sel) =>
-  /\[role="progressbar"\]/.test(sel) || /\[aria-busy="true"\]/.test(sel)
+  /\[role="progressbar"\]/.test(sel) ||
+  /\[aria-busy="true"\]/.test(sel) ||
+  /svg\[data-state="ongoing"\]/.test(sel)
 
 test('calm narrows iteration count only, so the re-arm can still win', async () => {
   const { calls } = await boot()
@@ -590,4 +592,100 @@ test('avatar circles are not exempt from the square rule', async () => {
   const css = calls.css.join('\n')
   assert.ok(!/border-radius:\s*50%/.test(css))
   assert.ok(!/border-radius:\s*999/.test(css))
+})
+
+test('the session spinner is a square chase that survives calm and reduced motion', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  assert.match(css, /@keyframes kat-spin-chase/, 'the spinner must use the square chase keyframes')
+
+  const chase = rules(css).filter(
+    (r) => /svg\[data-state="ongoing"\]/.test(r.selector) && /kat-spin-chase/.test(r.body),
+  )
+  assert.ok(chase.length > 0, 'the working spinner must run the chase animation')
+  assert.ok(
+    chase.some((r) => !/data-kat-motion="calm"/.test(r.selector)),
+    'the chase must run in the base sheet, not only under one motion pref',
+  )
+
+  const calmRearm = rules(css).filter(
+    (r) =>
+      /data-kat-motion="calm"/.test(r.selector) &&
+      /svg\[data-state="ongoing"\]/.test(r.selector) &&
+      /animation-iteration-count:\s*infinite/.test(r.body),
+  )
+  assert.ok(
+    calmRearm.length > 0,
+    'calm zeroes every animation; the spinner must be re-armed or a working session looks finished',
+  )
+
+  const reduced = rules(css).filter(
+    (r) =>
+      /prefers-reduced-motion/.test(r.selector) ||
+      /svg\[data-state="ongoing"\]/.test(r.selector),
+  )
+  assert.ok(
+    /animation-name:\s*kat-spin-chase/.test(css),
+    'reduced motion must name the chase explicitly, or animation:none wins and it stops',
+  )
+})
+
+test('the effort picker becomes a sliding segmented bar with accent fill and spring knob', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+
+  const bar = rules(css).filter((r) => /\[data-kat-effort-bar\]/.test(r.selector))
+  assert.ok(bar.length > 0, 'the effort bar layout must be scoped to the enhanced menu')
+  assert.ok(
+    bar.some((r) => /display:\s*flex/.test(r.body) && /flex-direction:\s*row/.test(r.body)),
+    'effort options must lay out as a horizontal bar, not the host vertical list',
+  )
+  assert.ok(
+    bar.some((r) => /min-width:\s*0/.test(r.body)),
+    'the host sets min-width:100% on rows; without min-width:0 the segments cannot shrink and overflow',
+  )
+  assert.ok(
+    bar.some((r) => /min-width:\s*min\(3[0-9]{2}px/.test(r.body)),
+    'the bar must be wide enough for the longest label; at host width "Default" ellipsizes',
+  )
+
+  const pill = rules(css).filter((r) => /\.kat-effort-pill/.test(r.selector))
+  assert.ok(pill.length > 0, 'the sliding indicator must exist')
+  assert.ok(
+    pill.some((r) => /transition:[^;]*transform/.test(r.body) && /cubic-bezier/.test(r.body)),
+    'the indicator must slide (transform transition) with an eased curve',
+  )
+  assert.ok(
+    pill.some((r) => /pointer-events:\s*none/.test(r.body)),
+    'the indicator must never intercept clicks meant for the options',
+  )
+
+  const fill = rules(css).filter((r) => /\.dsh-claude-effort-fill/.test(r.selector))
+  assert.ok(
+    fill.some((r) => /var\(--dsw-alias-brand-primary/.test(r.body)),
+    'the slider fill must carry the theme accent',
+  )
+
+  const knob = rules(css).filter((r) => /\.dsh-claude-effort-knob/.test(r.selector))
+  assert.ok(
+    knob.some((r) => /translate[^;]*cubic-bezier\([^)]*,\s*1\.\d+/.test(r.body)),
+    'the knob must travel with an overshoot ease so it settles with a pop',
+  )
+})
+
+test('the effort enhancer never targets the permission popover', async () => {
+  const { calls, module } = await boot()
+  assert.equal(typeof module.apply, 'function')
+  // The enhancer is DOM-driven and degrades silently without MutationObserver;
+  // booting the harness (no MutationObserver in the sandbox) must not throw.
+  const { readFile } = await import('node:fs/promises')
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(
+    /dsh-claude-perm-popover/.test(src),
+    'the enhancer must explicitly exclude the permission popover from the bar treatment',
+  )
+  assert.ok(
+    /menuitemradio/.test(src),
+    'the enhancer must key on menuitemradio options, not the model list items',
+  )
 })
