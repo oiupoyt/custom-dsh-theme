@@ -300,14 +300,17 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
 }
 
 /* Working-session spinner: claude rotates a round ring; the square
-   signature uses a solid square instead, with no white ring line. */
+   signature uses a smaller hollow square instead. */
 @keyframes kat-square-spin{
   to{transform:rotate(1turn)}
 }
 ${K} svg[data-state="ongoing"]{
   animation:kat-square-spin .85s linear infinite;
-  border:0 !important;
-  background-color:var(--dsw-alias-label-primary,#f2f2f2);
+  box-sizing:border-box !important;
+  width:8px !important;
+  height:8px !important;
+  border:1px solid var(--dsw-alias-label-primary,#f2f2f2) !important;
+  background-color:transparent;
   border-radius:var(--kat-radius) !important;
 }
 
