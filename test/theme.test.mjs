@@ -20,6 +20,20 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+/** Coarse selector specificity as comparable weights: ids, then classes/attrs. */
+function specificity(selector) {
+  const ids = (selector.match(/#[\w-]+/g) || []).length
+  const attrs = (selector.match(/\[[^\]]+\]/g) || []).length
+  const classes = (selector.match(/\.[\w-]+/g) || []).length
+  return ids * 100 + (attrs + classes) * 10
+}
+
+/**
+ * claude-style declares its prose variables on a two-attribute body selector,
+ * so any binding of ours that is meant to win must outrank that weight.
+ */
+const CLAUDE_PROSE_DECL_WEIGHT = specificity('body[data-dsh-claude-style][data-dsh-claude-typeface=claude]')
+
 /**
  * Boot the browser module in a sandbox with a recording context. Returns the
  * observed §calls so tests assert behaviour, not internals.
@@ -156,6 +170,41 @@ test('registers a theme token layer with a light/dark pair for every token', asy
   }
 })
 
+/**
+ * Radii are 0 in both modes on purpose, and these masks read the same over
+ * either substrate. Every other repainted token must carry a real light value,
+ * otherwise light mode silently renders dark.
+ */
+const MODE_INDEPENDENT = new Set([
+  '--dsw-alias-bg-mask-3',
+  '--dsw-alias-bg-mask-photo',
+  '--dsw-alias-tooltip-key-bg',
+  '--dsw-radius-xs',
+  '--dsw-radius-sm',
+  '--dsw-radius-md',
+  '--dsw-radius-lg',
+  '--dsw-radius-xl',
+  '--dsw-radius-panel',
+])
+
+test('light mode is a distinct palette, not dark values reused', async () => {
+  const { calls } = await boot()
+  const t = calls.tokens[0].tokens
+  const isColor = (v) => /^#[0-9a-f]{3,8}$/i.test(v)
+  let checked = 0
+  for (const [name, value] of Object.entries(t)) {
+    if (MODE_INDEPENDENT.has(name)) continue
+    if (!isColor(value.dark) || !isColor(value.light)) continue
+    checked += 1
+    assert.notEqual(
+      value.light,
+      value.dark,
+      `${name} is ${value.light} in both modes, so light mode would render dark`,
+    )
+  }
+  assert.ok(checked >= 60, `expected broad colour coverage, only checked ${checked}`)
+})
+
 test('paints the obsidian signature on the dark palette', async () => {
   const { calls } = await boot()
   const t = calls.tokens[0].tokens
@@ -216,6 +265,20 @@ test('squares every corner in the injected stylesheet', async () => {
   assert.ok(!/border-radius:\s*(?!0|0px|var\(--kat-radius\))/.test(css), 'no rounded corner may survive')
 })
 
+test('squares corners with !important, because claude-style rounds with !important', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const decls = [...css.matchAll(/border-radius:\s*([^;}]+)/g)].map((m) => m[1].trim())
+  assert.ok(decls.length > 0, 'the sheet must set border-radius')
+  for (const decl of decls) {
+    assert.match(
+      decl,
+      /^[^;]*!\s*important$/i,
+      `border-radius "${decl}" must be !important to outrank claude-style's rounded !important rules`,
+    )
+  }
+})
+
 /** Split a stylesheet into { selector, body } rules (one nesting level). */
 function rules(css) {
   const out = []
@@ -227,6 +290,28 @@ function rules(css) {
 
 const isProgressSelector = (sel) =>
   /\[role="progressbar"\]/.test(sel) || /\[aria-busy="true"\]/.test(sel)
+
+test('calm narrows iteration count only, so the re-arm can still win', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const calm = rules(css).filter((r) => /data-kat-motion="calm"/.test(r.selector))
+  assert.ok(calm.length > 0, 'calm rules must exist')
+
+  // `animation:none` and `animation-name:none` both stop the named animation, so
+  // on a wildcard they outrank and undo the progress/caret re-arm no matter how
+  // specific that re-arm is. Calm may only narrow the iteration count.
+  const rewritesName = (body) =>
+    /(^|;)\s*animation\s*:/.test(body) || /(^|;)\s*animation-name\s*:/.test(body)
+  const isWildcard = (selector) => /(^|[\s,])\*(\s|::(before|after)|,|$)/.test(selector)
+
+  for (const rule of calm) {
+    if (!rewritesName(rule.body)) continue
+    assert.ok(
+      !isWildcard(rule.selector),
+      `calm resets the animation on a wildcard, which stops the re-armed cues: ${rule.selector.slice(0, 90)}`,
+    )
+  }
+})
 
 test('calm motion is the default and no endless animation survives it', async () => {
   const { calls } = await boot()
@@ -340,18 +425,37 @@ test('drives prose through the variable claude-style actually reads', async () =
   // The default path matters as much as the switch: claude-style reads its own
   // token unconditionally, so the base block has to bind it or prose stays
   // serif no matter what the host markdown token says.
-  const base = rules(css).filter((r) => /^body\[data-kat-theme\]$/.test(r.selector))
+  const base = rules(css).filter((r) => /^body\[data-kat-theme\]/.test(r.selector))
   assert.ok(base.length > 0, 'the base theme block must exist')
   assert.match(
     base[0].body,
-    /--dsh-claude-font-prose:\s*var\(--kat-font-prose\)/,
-    'the base block must bind claude-style prose to the prose stack',
+    /--kat-font-prose:\s*var\(--kat-font-sans\)/,
+    'prose defaults to the sans stack',
+  )
+  // A plain body[data-kat-theme] block loses to claude-style's own two-attribute
+  // declaration, so the binding is inert unless the selector outranks it.
+  const winning = rules(css).filter(
+    (r) =>
+      /--dsh-claude-font-prose:\s*var\(--kat-font-prose\)/.test(r.body) &&
+      specificity(r.selector) > CLAUDE_PROSE_DECL_WEIGHT,
+  )
+  assert.ok(
+    winning.length > 0,
+    `a prose binding must outrank claude-style's own declaration (weights above ${CLAUDE_PROSE_DECL_WEIGHT})`,
   )
   assert.match(
-    base[0].body,
+    winning[0].body,
     /--dsh-claude-font-serif:\s*var\(--kat-font-prose\)/,
     'serif must be bound too, since claude-style may prefer it',
   )
+  // The mono switch has to win for the same reason.
+  const monoWin = rules(css).filter(
+    (r) =>
+      /data-kat-prose="mono"/.test(r.selector) &&
+      /--dsh-claude-font-prose:\s*var\(--kat-font-mono\)/.test(r.body) &&
+      specificity(r.selector.replace(/=("|')?mono\1?/g, '')) >= CLAUDE_PROSE_DECL_WEIGHT,
+  )
+  assert.ok(monoWin.length > 0, 'the mono prose switch must outrank claude-style too')
 })
 
 test('registers the settings page with its five controls', async () => {
@@ -375,8 +479,10 @@ test('works without dsh-claude-style: only documented host tokens are written', 
     assert.match(name, /^--(dsw-(alias|specific|static|menu|radius|font|shadow)-|ds-font-family-code$)/, `undocumented token ${name}`)
   }
   assert.ok(t['--dsw-radius-sm'] && t['--dsw-radius-md'] && t['--dsw-radius-lg'] && t['--dsw-radius-xl'])
-  assert.equal(t['--dsw-radius-sm'].dark, '0')
-  assert.equal(t['--dsw-radius-panel'].dark, '0')
+  for (const name of ['--dsw-radius-xs', '--dsw-radius-sm', '--dsw-radius-md', '--dsw-radius-lg', '--dsw-radius-xl', '--dsw-radius-panel']) {
+    assert.equal(t[name].dark, '0', `${name} must be square in dark mode`)
+    assert.equal(t[name].light, '0', `${name} must be square in light mode`)
+  }
 })
 
 test('never touches a service it did not declare', async () => {

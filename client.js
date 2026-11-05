@@ -231,12 +231,15 @@ body[data-kat-theme]{
   --kat-font-prose:var(--kat-font-sans);
   --kat-prose-gap:18px;
   --kat-row-pad:9px;
-  /* claude-style paints answer text from its own private token, so the prose
-     switch has to move that variable as well as the host's markdown fonts. */
+}
+/* claude-style declares its own prose variables on a two-attribute body
+   selector, so a plain body block loses the cascade and prose stays serif.
+   This repeats attributes to outrank that declaration. */
+${K}{
   --dsh-claude-font-prose:var(--kat-font-prose);
   --dsh-claude-font-serif:var(--kat-font-prose);
 }
-body[data-kat-prose="mono"]{
+${K}[data-kat-prose="mono"]{
   --kat-font-prose:var(--kat-font-mono);
   --dsh-claude-font-prose:var(--kat-font-mono);
   --dsh-claude-font-serif:var(--kat-font-mono);
