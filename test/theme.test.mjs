@@ -594,15 +594,20 @@ test('avatar circles are not exempt from the square rule', async () => {
   assert.ok(!/border-radius:\s*999/.test(css))
 })
 
-test('the session spinner glows in and out, and survives calm and reduced motion', async () => {
+test('the session spinner is a plain square spinner, and survives calm and reduced motion', async () => {
   const { calls } = await boot()
   const css = calls.css.join('\n')
-  assert.match(css, /@keyframes kat-glow-pulse/, 'the spinner must use the glow pulse keyframes')
+  assert.match(css, /@keyframes kat-square-spin/, 'the spinner must use the square rotation keyframes')
+  assert.doesNotMatch(css, /@keyframes kat-glow-pulse/, 'the glow pulse must be removed')
 
-  const glow = rules(css).filter(
-    (r) => /svg\[data-state="ongoing"\]/.test(r.selector) && /kat-glow-pulse/.test(r.body),
+  const spin = rules(css).filter(
+    (r) => /svg\[data-state="ongoing"\]/.test(r.selector) && /kat-square-spin/.test(r.body),
   )
-  assert.ok(glow.length > 0, 'the working spinner must run the glow animation')
+  assert.ok(spin.length > 0, 'the working spinner must run the square spin animation')
+  assert.ok(
+    spin.some((r) => /border-radius:\s*var\(--kat-radius\)/.test(r.body)),
+    'the spinner must stay square',
+  )
 
   const calmRearm = rules(css).filter(
     (r) =>
@@ -615,8 +620,8 @@ test('the session spinner glows in and out, and survives calm and reduced motion
     'calm zeroes every animation; the spinner must be re-armed or a working session looks finished',
   )
   assert.ok(
-    /animation-name:\s*kat-glow-pulse/.test(css),
-    'reduced motion must name the glow explicitly, or animation:none wins and it stops',
+    /animation-name:\s*kat-square-spin/.test(css),
+    'reduced motion must name the square spin explicitly, or animation:none wins and it stops',
   )
 })
 

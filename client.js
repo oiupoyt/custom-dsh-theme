@@ -231,7 +231,6 @@ body[data-kat-theme]{
   --kat-font-prose:var(--kat-font-sans);
   --kat-prose-gap:18px;
   --kat-row-pad:9px;
-  --kat-spin-on:var(--dsw-alias-label-primary,#f2f2f2);
 }
 /* claude-style declares its own prose variables on a two-attribute body
    selector, so a plain body block loses the cascade and prose stays serif.
@@ -301,15 +300,12 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
 }
 
 /* Working-session spinner: claude rotates a plain round ring; the square
-   signature replaces it with a glow that breathes in and out. Opacity and a
-   square halo pulse together, so a working session reads as a slow pulse
-   rather than a rotation. */
-@keyframes kat-glow-pulse{
-  0%,100%{opacity:.55;box-shadow:0 0 0 0 color-mix(in srgb,var(--kat-spin-on) 0%,transparent)}
-  50%{opacity:1;box-shadow:0 0 10px 2px color-mix(in srgb,var(--kat-spin-on) 45%,transparent)}
+   signature keeps the rotation but removes the round shape. */
+@keyframes kat-square-spin{
+  to{transform:rotate(1turn)}
 }
 ${K} svg[data-state="ongoing"]{
-  animation:kat-glow-pulse 1.8s ease-in-out infinite;
+  animation:kat-square-spin .85s linear infinite;
   border-radius:var(--kat-radius) !important;
 }
 
@@ -372,8 +368,8 @@ ${K} .dsh-claude-effort-tick{background:var(--dsw-alias-label-tertiary,#8a8a8a)}
     animation-iteration-count:infinite !important;
   }
   html:root body[data-kat-theme] svg[data-state="ongoing"]{
-    animation-name:kat-glow-pulse !important;
-    animation-duration:2.6s !important;
+    animation-name:kat-square-spin !important;
+    animation-duration:1.6s !important;
     animation-iteration-count:infinite !important;
   }
 }
