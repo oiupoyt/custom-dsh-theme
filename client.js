@@ -232,7 +232,6 @@ body[data-kat-theme]{
   --kat-prose-gap:18px;
   --kat-row-pad:9px;
   --kat-spin-on:var(--dsw-alias-label-primary,#f2f2f2);
-  --kat-spin-off:color-mix(in srgb,var(--dsw-alias-label-primary,#f2f2f2) 18%,transparent);
 }
 /* claude-style declares its own prose variables on a two-attribute body
    selector, so a plain body block loses the cascade and prose stays serif.
@@ -302,17 +301,15 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
 }
 
 /* Working-session spinner: claude rotates a plain round ring; the square
-   signature replaces it with a chase. One bright edge of the square steps
-   around the perimeter, so the motion reads as a running light, not a
-   spinner. The square rule already flattens its radius to zero. */
-@keyframes kat-spin-chase{
-  0%,100%{border-color:var(--kat-spin-on) var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-off)}
-  25%{border-color:var(--kat-spin-off) var(--kat-spin-on) var(--kat-spin-off) var(--kat-spin-off)}
-  50%{border-color:var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-on) var(--kat-spin-off)}
-  75%{border-color:var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-off) var(--kat-spin-on)}
+   signature replaces it with a glow that breathes in and out. Opacity and a
+   square halo pulse together, so a working session reads as a slow pulse
+   rather than a rotation. */
+@keyframes kat-glow-pulse{
+  0%,100%{opacity:.55;box-shadow:0 0 0 0 color-mix(in srgb,var(--kat-spin-on) 0%,transparent)}
+  50%{opacity:1;box-shadow:0 0 10px 2px color-mix(in srgb,var(--kat-spin-on) 45%,transparent)}
 }
 ${K} svg[data-state="ongoing"]{
-  animation:kat-spin-chase 1.2s linear infinite;
+  animation:kat-glow-pulse 1.8s ease-in-out infinite;
   border-radius:var(--kat-radius) !important;
 }
 
@@ -375,8 +372,8 @@ ${K} .dsh-claude-effort-tick{background:var(--dsw-alias-label-tertiary,#8a8a8a)}
     animation-iteration-count:infinite !important;
   }
   html:root body[data-kat-theme] svg[data-state="ongoing"]{
-    animation-name:kat-spin-chase !important;
-    animation-duration:1.6s !important;
+    animation-name:kat-glow-pulse !important;
+    animation-duration:2.6s !important;
     animation-iteration-count:infinite !important;
   }
 }
@@ -454,21 +451,41 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       // Effort picker, list form: a MutationObserver finds the host's effort
       // radio menu, marks it, and keeps a sliding pill under the checked
       // option. Presentational only: clicks and keyboard still run through
-      // the native menuitems. The permission popover and any menu that is
-      // not the effort list are left alone, and a shape we do not recognise
-      // degrades to the styled bar without a pill.
+      // the native menuitems.
+      //
+      // The matcher is deliberately strict. The model list is a menu of
+      // around a thousand menuitemradios whose names contain effort words
+      // ("o3 Mini High"), so a substring check laid the model selector out as
+      // a bar and broke it. A menu qualifies only when the permission
+      // popover does not own it, every radio label matches an effort label
+      // exactly, and the list is small. If a marked menu stops qualifying
+      // (for example the host swaps in other content), the bar takes itself
+      // off instead of staying on the wrong control.
+      const EFFORT_LABEL = /^(default|low|medium|high)$/i
       const stopEffortBars = (() => {
         try {
           if (typeof MutationObserver === 'undefined') return () => {}
           if (!document || typeof document.querySelectorAll !== 'function' || !document.body) return () => {}
 
           const marked = new WeakSet()
+          const qualifies = (menu, radios) =>
+            radios.length > 0 &&
+            radios.length <= 12 &&
+            !(menu.closest && menu.closest('.dsh-claude-perm-popover')) &&
+            radios.every((r) => EFFORT_LABEL.test((r.textContent || '').trim()))
+          const unmark = (menu) => {
+            marked.delete(menu)
+            menu.removeAttribute('data-kat-effort-bar')
+            const pill = menu.querySelector('.kat-effort-pill')
+            if (pill) pill.remove()
+          }
           const paint = (menu) => {
             if (!menu || menu.isConnected === false) return
             const radios = [...menu.querySelectorAll('[role="menuitemradio"]')]
-            if (!radios.length) return
-            if (menu.closest && menu.closest('.dsh-claude-perm-popover')) return
-            if (!radios.some((r) => /default|low|medium|high/i.test(r.textContent || ''))) return
+            if (!qualifies(menu, radios)) {
+              if (marked.has(menu)) unmark(menu)
+              return
+            }
             if (!marked.has(menu)) {
               marked.add(menu)
               menu.setAttribute('data-kat-effort-bar', '')
@@ -517,9 +534,11 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           return () => {
             observer.disconnect()
             for (const menu of document.querySelectorAll('[data-kat-effort-bar]')) {
-              const pill = menu.querySelector('.kat-effort-pill')
-              if (pill) pill.remove()
-              menu.removeAttribute('data-kat-effort-bar')
+              try {
+                unmark(menu)
+              } catch {
+                /* already gone */
+              }
             }
           }
         } catch {

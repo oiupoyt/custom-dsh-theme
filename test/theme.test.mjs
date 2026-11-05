@@ -594,19 +594,15 @@ test('avatar circles are not exempt from the square rule', async () => {
   assert.ok(!/border-radius:\s*999/.test(css))
 })
 
-test('the session spinner is a square chase that survives calm and reduced motion', async () => {
+test('the session spinner glows in and out, and survives calm and reduced motion', async () => {
   const { calls } = await boot()
   const css = calls.css.join('\n')
-  assert.match(css, /@keyframes kat-spin-chase/, 'the spinner must use the square chase keyframes')
+  assert.match(css, /@keyframes kat-glow-pulse/, 'the spinner must use the glow pulse keyframes')
 
-  const chase = rules(css).filter(
-    (r) => /svg\[data-state="ongoing"\]/.test(r.selector) && /kat-spin-chase/.test(r.body),
+  const glow = rules(css).filter(
+    (r) => /svg\[data-state="ongoing"\]/.test(r.selector) && /kat-glow-pulse/.test(r.body),
   )
-  assert.ok(chase.length > 0, 'the working spinner must run the chase animation')
-  assert.ok(
-    chase.some((r) => !/data-kat-motion="calm"/.test(r.selector)),
-    'the chase must run in the base sheet, not only under one motion pref',
-  )
+  assert.ok(glow.length > 0, 'the working spinner must run the glow animation')
 
   const calmRearm = rules(css).filter(
     (r) =>
@@ -618,15 +614,9 @@ test('the session spinner is a square chase that survives calm and reduced motio
     calmRearm.length > 0,
     'calm zeroes every animation; the spinner must be re-armed or a working session looks finished',
   )
-
-  const reduced = rules(css).filter(
-    (r) =>
-      /prefers-reduced-motion/.test(r.selector) ||
-      /svg\[data-state="ongoing"\]/.test(r.selector),
-  )
   assert.ok(
-    /animation-name:\s*kat-spin-chase/.test(css),
-    'reduced motion must name the chase explicitly, or animation:none wins and it stops',
+    /animation-name:\s*kat-glow-pulse/.test(css),
+    'reduced motion must name the glow explicitly, or animation:none wins and it stops',
   )
 })
 
@@ -673,13 +663,17 @@ test('the effort picker becomes a sliding segmented bar with accent fill and spr
   )
 })
 
-test('the effort enhancer never targets the permission popover', async () => {
-  const { calls, module } = await boot()
-  assert.equal(typeof module.apply, 'function')
-  // The enhancer is DOM-driven and degrades silently without MutationObserver;
-  // booting the harness (no MutationObserver in the sandbox) must not throw.
-  const { readFile } = await import('node:fs/promises')
+test('the effort enhancer can only match the effort list, and undoes itself if content changes', async () => {
+  await boot()
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(
+    src.includes('/^(default|low|medium|high)$/i'),
+    'effort labels must match exactly; a substring match hits model names like "o3 Mini High" and lays the model list out as a bar',
+  )
+  assert.ok(
+    /\.every\(/.test(src),
+    'every radio in the menu must be an effort label, so the thousand-row model list can never qualify',
+  )
   assert.ok(
     /dsh-claude-perm-popover/.test(src),
     'the enhancer must explicitly exclude the permission popover from the bar treatment',
@@ -687,5 +681,9 @@ test('the effort enhancer never targets the permission popover', async () => {
   assert.ok(
     /menuitemradio/.test(src),
     'the enhancer must key on menuitemradio options, not the model list items',
+  )
+  assert.ok(
+    /removeAttribute\('data-kat-effort-bar'\)/.test(src),
+    'if a menu stops being the effort list, the enhancer must take the bar off instead of leaving it on the model selector',
   )
 })
