@@ -299,13 +299,15 @@ html:root body[data-kat-theme][data-kat-theme][data-kat-theme][data-kat-motion="
   animation-iteration-count:infinite !important;
 }
 
-/* Working-session spinner: claude rotates a plain round ring; the square
-   signature keeps the rotation but removes the round shape. */
+/* Working-session spinner: claude rotates a round ring; the square
+   signature uses a solid square instead, with no white ring line. */
 @keyframes kat-square-spin{
   to{transform:rotate(1turn)}
 }
 ${K} svg[data-state="ongoing"]{
   animation:kat-square-spin .85s linear infinite;
+  border:0 !important;
+  background-color:var(--dsw-alias-label-primary,#f2f2f2);
   border-radius:var(--kat-radius) !important;
 }
 

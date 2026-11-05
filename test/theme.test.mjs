@@ -594,7 +594,7 @@ test('avatar circles are not exempt from the square rule', async () => {
   assert.ok(!/border-radius:\s*999/.test(css))
 })
 
-test('the session spinner is a plain square spinner, and survives calm and reduced motion', async () => {
+test('the session spinner is a solid square spinner, and survives calm and reduced motion', async () => {
   const { calls } = await boot()
   const css = calls.css.join('\n')
   assert.match(css, /@keyframes kat-square-spin/, 'the spinner must use the square rotation keyframes')
@@ -607,6 +607,14 @@ test('the session spinner is a plain square spinner, and survives calm and reduc
   assert.ok(
     spin.some((r) => /border-radius:\s*var\(--kat-radius\)/.test(r.body)),
     'the spinner must stay square',
+  )
+  assert.ok(
+    spin.some(
+      (r) =>
+        /border:\s*0\s*!important/.test(r.body) &&
+        /background-color:\s*var\(--dsw-alias-label-primary,#f2f2f2\)/.test(r.body),
+    ),
+    'the white ring line must be removed and replaced with a solid square',
   )
 
   const calmRearm = rules(css).filter(
