@@ -314,12 +314,35 @@ window.__ModuleLoader__.load({
        Jakub Antalik); drawn here on a plain 2D canvas so the bundle keeps its
        no-dependencies promise. */
     const ORB_PRESETS = {
-      sm: { dots: 20, weight: 0.07, speed: 0.9, tilt: 0.62 },
-      lg: { dots: 46, weight: 0.026, speed: 0.55, tilt: 0.5 },
+      sm: { dots: 12, weight: 0.09, speed: 0.9, tilt: 0.62 },
+      lg: { dots: 64, weight: 0.018, speed: 0.55, tilt: 0.5 },
     }
     const ORB_SCALE = 0.84
 
-    function orbDots(t, size) {
+    /**
+     * `playful` turns the mascot orb into a character rather than a status
+     * light: it bobs on its own rhythm, breathes a few percent, and sheds
+     * sparks on expanding orbits. Kept opt-in so sixteen of them in a session
+     * list stay still.
+     */
+    function orbSparks(t, size) {
+      const sparks = []
+      for (let i = 0; i < 3; i++) {
+        const phase = (t * 0.34 + i / 3) % 1
+        const angle = t * 0.55 + i * ((Math.PI * 2) / 3)
+        const radius = size * (0.3 + phase * 0.2)
+        sparks.push({
+          x: size / 2 + Math.cos(angle) * radius,
+          y: size / 2 + Math.sin(angle) * radius,
+          r: Math.max(0.5, size * 0.018 * (1 - phase)),
+          a: (1 - phase) * 0.6,
+        })
+      }
+      return sparks
+    }
+
+    function orbDots(t, size, options) {
+      const playful = options !== undefined && options.playful === true
       const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
       const n = preset.dots
       const c = size / 2
@@ -348,7 +371,13 @@ window.__ModuleLoader__.load({
           a: 0.16 + depth * 0.84,
         })
       }
-      return { size, dots }
+      return {
+        size,
+        dots,
+        bob: playful ? Math.sin(t * 1.7) * size * 0.022 : 0,
+        breathe: playful ? 1 + Math.sin(t * 1.15) * 0.034 : 1,
+        sparks: playful ? orbSparks(t, size) : [],
+      }
     }
 
     function orbInk() {
@@ -362,7 +391,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Returns { element, dispose } or null when the platform cannot draw. */
-    function createOrb(size, label) {
+    function createOrb(size, label, options) {
       try {
         if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null
         const canvas = document.createElement('canvas')
@@ -383,14 +412,28 @@ window.__ModuleLoader__.load({
         ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0)
 
         const draw = (t) => {
+          const frame = orbDots(t, size, options)
           ctx2d.clearRect(0, 0, size, size)
           ctx2d.fillStyle = orbInk()
-          for (const dot of orbDots(t, size).dots) {
+          const c = size / 2
+          ctx2d.save()
+          // Bob and breathe around the orb's own centre, never the canvas corner.
+          ctx2d.translate(c, c + frame.bob)
+          ctx2d.scale(frame.breathe, frame.breathe)
+          ctx2d.translate(-c, -c)
+          for (const dot of frame.dots) {
             ctx2d.globalAlpha = dot.a
             ctx2d.beginPath()
             ctx2d.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2)
             ctx2d.fill()
           }
+          for (const spark of frame.sparks) {
+            ctx2d.globalAlpha = spark.a
+            ctx2d.beginPath()
+            ctx2d.arc(spark.x, spark.y, spark.r, 0, Math.PI * 2)
+            ctx2d.fill()
+          }
+          ctx2d.restore()
           ctx2d.globalAlpha = 1
         }
 
@@ -565,6 +608,33 @@ ${K} [data-dsh-boot] [class*="hint"]{
   font-size:11px !important;
   letter-spacing:.02em;
   color:var(--dsw-alias-label-dimmed,#6b6b6b) !important;
+}
+
+/* The composer mascot: claude-style paints a spritesheet whale above the
+   prompt box and hangs a click bubble off the same host. The sprite is hidden
+   and the orb drawn in its place; the host element and its hit area stay, so
+   the bubble keeps working. */
+${K} .dsh-claude-deepy-sprite{
+  opacity:0 !important;
+  visibility:hidden !important;
+}
+${K} [data-kat-orb-deepy]{
+  position:absolute !important;
+  inset:0;margin:auto;
+  z-index:0;
+}
+
+/* Idle sessions render an empty leading slot that still reserves its width,
+   which reads as a hole where the status light would be. Collapse it: the
+   space appears only for a row that actually has an indicator. */
+${K} [class*="slot"]:has(> [data-slot="sidebar.session.row.leading"]:empty){
+  width:0 !important;
+  min-width:0 !important;
+  padding-left:0 !important;
+  padding-right:0 !important;
+  margin-left:0 !important;
+  margin-right:0 !important;
+  overflow:hidden !important;
 }
 
 /* Effort picker, list form: the host vertical radio menu becomes a
@@ -1035,10 +1105,26 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             }
           }
 
+          const mountMascotOrb = () => {
+            const deepy = document.querySelector('.dsh-claude-deepy')
+            if (!deepy || done.has(deepy)) return
+            const box = deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
+            const edge = Math.min((box && box.width) || 104, (box && box.height) || 104)
+            const orb = createOrb(Math.max(40, Math.round(edge * 0.86)), 'Thinking orb', {
+              playful: true,
+            })
+            if (!orb) return
+            done.add(deepy)
+            orb.element.setAttribute('data-kat-orb-deepy', '')
+            deepy.appendChild(orb.element)
+            live.push({ orb, host: null, spinner: deepy })
+          }
+
           const scan = () => {
             try {
               prune()
               mountBootOrb()
+              mountMascotOrb()
               for (const svg of document.querySelectorAll('svg[data-state="ongoing"]')) {
                 mountRowOrb(svg)
               }

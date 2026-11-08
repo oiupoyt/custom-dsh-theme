@@ -818,7 +818,10 @@ test('the working indicator orb is a dotted sphere, drawn from rotation', async 
 
   const small = kat.orbDots(0, 16)
   const large = kat.orbDots(0, 64)
-  assert.ok(small.dots.length >= 20, 'the small orb needs enough dots to read as a sphere')
+  assert.ok(
+    small.dots.length >= 8,
+    'the small orb needs enough dots to read as a sphere at 16px, and few enough that they merge into a blob',
+  )
   assert.ok(large.dots.length > small.dots.length, 'the large orb is its own preset, not a scaled-up small one')
 
   for (const dot of small.dots) {
@@ -875,5 +878,68 @@ test('the boot screen gets its own orb while the harness loads', async () => {
   assert.ok(
     /data-dsh-boot-spinner/.test(src),
     'the default boot spinner must be replaced by the orb, not stacked under it',
+  )
+})
+
+/* ---- Playful composer orb, and the sidebar's dead space ------------------ */
+
+test('the composer mascot is replaced by the orb, and its bubble still works', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(
+    /dsh-claude-deepy/.test(src),
+    'the mascot on the composer stack is .dsh-claude-deepy; that is what the orb replaces',
+  )
+  assert.ok(
+    /dsh-claude-deepy-sprite/.test(src),
+    'only the sprite may be hidden: removing the host would take the mascot bubble and its click target with it',
+  )
+  assert.ok(
+    /data-kat-orb-deepy/.test(src),
+    'the composer orb needs its own marker so teardown and the sprite hide target the same node',
+  )
+})
+
+test('the orb is playful: it bobs, breathes, and throws sparks', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+
+  const plain = orbDots(1, 64)
+  assert.equal(plain.bob, 0, 'the plain orb must not drift, or every row in the sidebar wobbles')
+  assert.equal(plain.breathe, 1)
+  assert.equal(plain.sparks.length, 0)
+
+  const playful = orbDots(1, 64, { playful: true })
+  assert.ok(Math.abs(playful.bob) > 0.4, 'the mascot orb must bob, or it reads as a still ball')
+  assert.ok(playful.breathe > 0.9 && playful.breathe < 1.1, 'breathing must stay subtle, not pulse')
+  assert.ok(playful.sparks.length >= 2, 'the mascot orb needs sparks to be as playful as the sprite it replaces')
+  for (const spark of playful.sparks) {
+    assert.ok(spark.a > 0 && spark.a <= 1, 'sparks must fade out, not pop')
+    assert.ok(spark.r > 0 && spark.r <= 3, 'sparks are small dots')
+    assert.ok(spark.x >= 0 && spark.x <= 64 && spark.y >= 0 && spark.y <= 64, 'sparks stay on the canvas')
+  }
+
+  const later = orbDots(1.9, 64, { playful: true })
+  assert.notEqual(later.bob, playful.bob, 'bobbing must move over time')
+  assert.notEqual(later.sparks[0].x, playful.sparks[0].x, 'sparks must travel, not sit still')
+})
+
+test('a session row with no indicator reclaims the space it was reserving', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const collapse = rules(css).filter(
+    (r) => /sidebar\.session\.row\.leading/.test(r.selector) && /:has\(/.test(r.selector),
+  )
+  assert.ok(
+    collapse.length > 0,
+    'idle rows render an empty leading slot that still takes width; the rule has to reach the parent that reserves it',
+  )
+  assert.ok(
+    collapse.some((r) => /width:\s*0/.test(r.body)),
+    'the empty slot must collapse to zero width instead of showing a hole',
+  )
+  assert.ok(
+    collapse.some((r) => /min-width:\s*0/.test(r.body)),
+    'the host sets a min-width on that slot; without min-width:0 the collapse is ignored',
   )
 })

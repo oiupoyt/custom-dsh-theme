@@ -19,13 +19,21 @@ Black, square, mono, quiet.
   sans unless you switch it to mono.
 - **Motion.** Calm by default: chrome loops stop, one-shot transitions stay
   snappy. Progress indicators keep spinning so loading never looks finished.
-- **Thinking orb.** The working-session indicator and the boot screen show a
-  dotted orb instead of a ring: points on a Fibonacci sphere, turned about a
-  tilted axis and shaded by depth. Two presets (16px rows, 56px boot), ink read
-  from the label token, DPR capped at 2, paused off-screen, and a still frame
-  under reduced motion. Drawn on a plain 2D canvas, inspired by
-  [thinking-orbs](https://rareformlabs.github.io/thinking-orbs/) (MIT, Jakub
+- **Thinking orb.** Working sessions, the boot screen and the composer mascot
+  show a dotted orb: points on a Fibonacci sphere, turned about a tilted axis
+  and shaded by depth. Three presets (16px session rows, 56px boot, 89px
+  composer), ink read from the label token, DPR capped at 2, paused off-screen,
+  and a still frame under reduced motion. Drawn on a plain 2D canvas, inspired
+  by [thinking-orbs](https://rareformlabs.github.io/thinking-orbs/) (MIT, Jakub
   Antalik); no runtime dependency, so the bundle stays one file.
+- **Composer mascot.** The DeepSeek whale above the prompt box is replaced by
+  the orb, drawn where the sprite was. Only the sprite is hidden: the host
+  element and its click target stay, so the mascot's bubble still works. That
+  orb is the playful one - it bobs on its own rhythm, breathes a few percent
+  and sheds sparks.
+- **List spacing.** A session row reserves a status-light column only when it
+  has a status light. Idle rows collapse that column instead of showing a hole,
+  so the list reads ragged-left where it used to read as broken.
 - **Top bar.** One compact band: the session title, mode chips and utility
   icons on a 32px row, the view tabs on a 32px rail below it, one hairline
   under the band, mono labels, and a single accent underline on the active tab.
