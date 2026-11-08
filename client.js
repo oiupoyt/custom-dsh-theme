@@ -451,16 +451,98 @@ window.__ModuleLoader__.load({
       return dots
     }
 
+    /** Fetching: particles stream along lanes, left to right. */
+    function orbFetchDots(t, size) {
+      const c = size / 2
+      const weight = size <= 24 ? 0.05 : 0.019
+      const lanes = 3
+      const count = size <= 24 ? 4 : 7
+      const dots = []
+      for (let lane = 0; lane < lanes; lane++) {
+        const y0 = c + (lane - (lanes - 1) / 2) * size * 0.16
+        for (let i = 0; i < count; i++) {
+          const phase = (i / count + t * 0.35 + lane * 0.13) % 1
+          const depth = 0.35 + 0.65 * Math.sin(phase * Math.PI)
+          dots.push({
+            x: size * 0.12 + phase * size * 0.76,
+            y: y0 + Math.sin(phase * Math.PI * 2) * size * 0.03,
+            r: Math.max(0.4, size * weight * (0.6 + depth * 0.8)),
+            a: 0.2 + depth * 0.8,
+          })
+        }
+      }
+      return dots
+    }
+
+    /** Reading: a lit band sweeps down a dotted page. */
+    function orbReadDots(t, size) {
+      const weight = size <= 24 ? 0.045 : 0.017
+      const cols = size <= 24 ? 4 : 7
+      const rows = size <= 24 ? 4 : 8
+      const sweep = (t * 0.5) % 1
+      const dots = []
+      for (let row = 0; row < rows; row++) {
+        const ry = size * 0.14 + ((row + 0.5) * size * 0.72) / rows
+        const lit = Math.max(0, 1 - Math.abs((row + 0.5) / rows - sweep) * 4)
+        for (let col = 0; col < cols; col++) {
+          dots.push({
+            x: size * 0.2 + ((col + 0.5) * size * 0.6) / cols,
+            y: ry + Math.sin(t * 2 + row * 1.7 + col) * size * 0.008,
+            r: Math.max(0.4, size * weight * (0.7 + lit * 0.7)),
+            a: 0.18 + lit * 0.82,
+          })
+        }
+      }
+      return dots
+    }
+
+    /** Reasoning: two counter-rotating rings, tighter than the working state. */
+    function orbReasoningDots(t, size) {
+      const c = size / 2
+      const weight = size <= 24 ? 0.055 : 0.019
+      const rings = [
+        { count: size <= 24 ? 5 : 8, radius: 0.66, tilt: 0.55, dir: 1 },
+        { count: size <= 24 ? 5 : 8, radius: 0.44, tilt: -0.75, dir: -1 },
+      ]
+      const dots = []
+      for (let ri = 0; ri < rings.length; ri++) {
+        const ring = rings[ri]
+        const spin = t * 1.1 * ring.dir
+        const cx = Math.cos(ring.tilt)
+        const sx = Math.sin(ring.tilt)
+        for (let i = 0; i < ring.count; i++) {
+          const angle = spin + (i * Math.PI * 2) / ring.count
+          const x0 = Math.cos(angle) * ring.radius
+          const z0 = Math.sin(angle) * ring.radius
+          const y1 = x0 * sx
+          const z1 = z0
+          const depth = (z1 + 1) / 2
+          dots.push({
+            x: c + x0 * c,
+            y: c - y1 * c,
+            r: Math.max(0.4, size * weight * (0.6 + depth * 0.8)),
+            a: 0.2 + depth * 0.8,
+            ring: ri,
+          })
+        }
+      }
+      return dots
+    }
+
     function orbDots(t, size, options) {
       const playful = options !== undefined && options.playful === true
       const requested =
         options !== undefined && typeof options.state === 'string' ? options.state : 'sphere'
-      const state = ['working', 'wave', 'scan', 'done', 'warning'].includes(requested)
+      const state = ['working', 'wave', 'scan', 'done', 'warning', 'fetch', 'reading', 'reasoning', 'waiting'].includes(requested)
         ? requested
         : 'sphere'
-      // A finished session settles: the geometry is frozen at one pose.
-      const tt = state === 'done' ? 0.55 : t
+      // Done keeps a slow drift so it reads as alive, not stuck; waiting is
+      // slower still.
+      const tt = state === 'done' ? t * 0.22 : state === 'waiting' ? t * 0.18 : t
       const pulse = state === 'warning' ? 0.55 + 0.45 * Math.sin(t * 2.6) : 1
+      const kick = options !== undefined && typeof options.kick === 'number'
+        ? Math.max(0, Math.min(1, options.kick))
+        : 0
       const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
       const n = preset.dots
       const c = size / 2
@@ -474,8 +556,12 @@ window.__ModuleLoader__.load({
       if (state === 'working') dots.push(...orbWorkingDots(tt, size))
       if (state === 'wave') dots.push(...orbWaveDots(tt, size))
       if (state === 'scan') dots.push(...orbScanDots(tt, size))
+      if (state === 'fetch') dots.push(...orbFetchDots(tt, size))
+      if (state === 'reading') dots.push(...orbReadDots(tt, size))
+      if (state === 'reasoning') dots.push(...orbReasoningDots(tt, size))
       // The status states are sphere geometry: done settles, warning pulses.
-      const usesSphere = state === 'sphere' || state === 'done' || state === 'warning'
+      const usesSphere =
+        state === 'sphere' || state === 'done' || state === 'warning' || state === 'waiting'
       for (let i = 0; usesSphere && i < n; i++) {
         const y = 1 - (2 * (i + 0.5)) / n
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
@@ -494,13 +580,27 @@ window.__ModuleLoader__.load({
           a: 0.16 + depth * 0.84,
         })
       }
+      // A poke shoves every particle outward from the centre; it springs back
+      // as the kick decays, so the click literally moves the orbs.
+      if (kick > 0) {
+        for (const dot of dots) {
+          dot.x += (dot.x - c) * kick * 0.45
+          dot.y += (dot.y - c) * kick * 0.45
+          dot.a = Math.min(1, dot.a * (1 - kick * 0.2))
+        }
+      }
       return {
         size,
         state,
+        kick,
         dots,
         pulse,
         bob: playful ? Math.sin(tt * 1.7) * size * 0.022 : 0,
-        breathe: playful ? 1 + Math.sin(tt * 1.15) * 0.034 : 1,
+        breathe: playful
+          ? 1 + Math.sin(tt * 1.15) * 0.034
+          : state === 'waiting'
+            ? 1 + Math.sin(t * 0.9) * 0.05
+            : 1,
         sparks: playful ? orbSparks(t, size) : [],
       }
     }
@@ -536,6 +636,12 @@ window.__ModuleLoader__.load({
       working: 'Working',
       wave: 'Writing',
       scan: 'Searching',
+      fetch: 'Fetching',
+      reading: 'Reading',
+      reasoning: 'Reasoning',
+      waiting: 'Waiting',
+      done: 'Finished',
+      warning: 'Needs attention',
     }
 
     function createOrb(size, label, options) {
@@ -567,7 +673,11 @@ window.__ModuleLoader__.load({
         const POKE_MS = 1400
 
         const draw = (t) => {
-          const frame = orbDots(t, size, { ...options, state })
+          // The poke shoves the particles outward and lets them spring back.
+          const ageMs = pokeAt >= 0 ? clock() - pokeAt : -1
+          const kick =
+            ageMs >= 0 && ageMs < 700 ? Math.sin((Math.PI * ageMs) / 700) : 0
+          const frame = orbDots(t, size, { ...options, state, kick })
           ctx2d.clearRect(0, 0, size, size)
           ctx2d.fillStyle = orbInk(options && options.ink)
           const c = size / 2
@@ -1326,12 +1436,39 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           const STATE_FOR_ANIMATION = {
             building: 'working',
             typing: 'wave',
-            thinking: 'scan',
+            thinking: 'reasoning',
             loading: 'scan',
-            idle: 'sphere',
+            idle: 'waiting',
           }
-          const stateFor = (deepy) =>
-            STATE_FOR_ANIMATION[(deepy && deepy.getAttribute('data-animation')) || ''] || 'sphere'
+
+          // The transcript tags every tool call with data-tool. While one is
+          // in flight, that name is the most specific thing the orb can say.
+          const TOOL_STATES = [
+            [/search/, 'scan'],
+            [/fetch|http|web/, 'fetch'],
+            [/bash|shell|exec|terminal|command/, 'working'],
+            [/read|write|edit|grep|glob|list|file|patch/, 'reading'],
+            [/image|generate|video/, 'reasoning'],
+          ]
+          const toolState = (name) => {
+            for (const [pattern, state] of TOOL_STATES) if (pattern.test(name)) return state
+            return 'working'
+          }
+
+          const activityState = () => {
+            const running = document.querySelector(
+              '[data-tool][data-state="running"],[data-tool][data-state="pending"],[data-tool][aria-busy="true"]',
+            )
+            if (running) return toolState((running.getAttribute('data-tool') || '').toLowerCase())
+            const deepy = document.querySelector('.dsh-claude-deepy')
+            if (deepy) {
+              const anim = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || '']
+              if (anim) return anim
+            }
+            // claude-style unmounts the mascot while a turn builds, so its
+            // absence is itself the "working" signal.
+            return 'working'
+          }
 
           let composerOrb = null
 
@@ -1366,13 +1503,13 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             if (composerOrb && composerOrb.element.isConnected) {
               if (composerOrb.element.parentElement !== anchor) anchor.appendChild(composerOrb.element)
               placeComposerOrb(composerOrb.element)
-              composerOrb.setState(stateFor(deepy))
+              composerOrb.setState(activityState())
               return
             }
             const smooth = deepy && deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
             const orb = createOrb(smooth && smooth.width ? Math.round(smooth.width * 0.86) : 89, 'Thinking orb', {
               playful: true,
-              state: stateFor(deepy),
+              state: activityState(),
             })
             if (!orb) return
             orb.element.classList.add('kat-composer-orb')
@@ -1447,7 +1584,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               childList: true,
               subtree: true,
               attributes: true,
-              attributeFilter: ['data-animation'],
+              attributeFilter: ['data-animation', 'data-state'],
             })
           }
 

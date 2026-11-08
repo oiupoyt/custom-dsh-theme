@@ -1115,10 +1115,10 @@ test('finished and warning states are orbs too, not bare rings', async () => {
     'the warning orb is a sphere that pulses, so it must have dots',
   )
   const doneLater = orbDots(2.1, 14, { state: 'done' })
-  assert.deepEqual(
+  assert.notDeepEqual(
     done.dots.map((d) => Math.round(d.x)),
     doneLater.dots.map((d) => Math.round(d.x)),
-    'a finished session must not keep moving; the orb settles',
+    'the finished orb must keep breathing and drifting; a frozen glyph reads as a stuck indicator',
   )
 
   const warn = orbDots(0.3, 14, { state: 'warning' })
@@ -1150,4 +1150,62 @@ test('the composer orb survives the mascot leaving the DOM', async () => {
     /kat-composer-orb/.test(src),
     'the fallback orb needs its own class so it can be positioned and removed',
   )
+})
+
+/* ---- The orb says what the model is doing, and moves when shoved --------- */
+
+test('the orb has a state for each kind of work the model does', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+  const states = ['working', 'scan', 'fetch', 'reading', 'reasoning', 'waiting', 'wave']
+  const seen = new Set()
+  for (const state of states) {
+    const frame = orbDots(0.7, 64, { state })
+    assert.equal(frame.state, state, `${state} must be a real state, not a fallback`)
+    assert.ok(frame.dots.length > 0, `${state} needs geometry`)
+    seen.add(frame.dots.map((d) => `${Math.round(d.x)},${Math.round(d.y)}`).join('|'))
+  }
+  assert.equal(seen.size, states.length, 'every activity must look different, or the orb reports nothing')
+})
+
+test('the activity is read from the tool that is running', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(/data-tool/.test(src), 'the transcript tags tool calls with data-tool; that is the activity signal')
+  for (const [pattern, state] of [
+    ['search', 'scan'],
+    ['fetch|web|http', 'fetch'],
+    ['bash|shell|exec', 'working'],
+    ['read|grep|glob', 'reading'],
+  ]) {
+    assert.match(
+      src,
+      new RegExp(`(?:${pattern})[^\\n]{0,120}${state}|${state}[^\\n]{0,120}(?:${pattern})`),
+      `tools matching ${pattern} must map to the ${state} state`,
+    )
+  }
+  assert.match(src, /data-state="running"|data-state="pending"|\[data-state=/, 'an in-flight tool must be distinguished from a finished one')
+})
+
+test('a click shoves the particles instead of only sparking', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+  const still = orbDots(0.7, 64, { state: 'working' })
+  const shoved = orbDots(0.7, 64, { state: 'working', kick: 1 })
+
+  assert.equal(still.kick, 0)
+  assert.equal(shoved.kick, 1)
+  const moved = still.dots.filter((d, i) => {
+    const a = d, b = shoved.dots[i]
+    return Math.hypot(a.x - b.x, a.y - b.y) > 1
+  })
+  assert.ok(moved.length > still.dots.length * 0.6, 'a kick must displace most particles')
+  // Outward, not a random scatter: the shove grows with distance from centre.
+  const centre = 32
+  const growth = still.dots.map((d, i) => {
+    const before = Math.hypot(d.x - centre, d.y - centre)
+    const after = Math.hypot(shoved.dots[i].x - centre, shoved.dots[i].y - centre)
+    return after - before
+  })
+  assert.ok(growth.every((g) => g > 0), 'particles must be pushed outward')
 })
