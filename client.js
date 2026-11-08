@@ -538,8 +538,16 @@ window.__ModuleLoader__.load({
         : 'sphere'
       // Done keeps a slow drift so it reads as alive, not stuck; waiting is
       // slower still.
-      const tt = state === 'done' ? t * 0.22 : state === 'waiting' ? t * 0.18 : t
-      const pulse = state === 'warning' ? 0.55 + 0.45 * Math.sin(t * 2.6) : 1
+      const tt = state === 'done' ? t * 0.5 : state === 'waiting' ? t * 0.18 : t
+      // A 12px sphere turning slowly moves less than a pixel per second, which
+      // reads as frozen. Done and warning carry a second, visible channel:
+      // brightness breathing, and for done a little scale.
+      const pulse =
+        state === 'warning'
+          ? 0.55 + 0.45 * Math.sin(t * 2.6)
+          : state === 'done'
+            ? 0.75 + 0.25 * Math.sin(t * 1.35)
+            : 1
       const kick = options !== undefined && typeof options.kick === 'number'
         ? Math.max(0, Math.min(1, options.kick))
         : 0
@@ -600,7 +608,9 @@ window.__ModuleLoader__.load({
           ? 1 + Math.sin(tt * 1.15) * 0.034
           : state === 'waiting'
             ? 1 + Math.sin(t * 0.9) * 0.05
-            : 1,
+            : state === 'done'
+              ? 1 + Math.sin(t * 0.9) * 0.12
+              : 1,
         sparks: playful ? orbSparks(t, size) : [],
       }
     }
@@ -672,7 +682,12 @@ window.__ModuleLoader__.load({
             : Date.now()
         const POKE_MS = 1400
 
+        let frames = 0
         const draw = (t) => {
+          frames += 1
+          if (frames % 10 === 1 && canvas.setAttribute) {
+            canvas.setAttribute('data-kat-orb-frames', String(frames))
+          }
           // The poke shoves the particles outward and lets them spring back.
           const ageMs = pokeAt >= 0 ? clock() - pokeAt : -1
           const kick =
@@ -902,8 +917,8 @@ ${K} [data-dsh-boot-orb]{position:static !important;margin:0 auto;display:block}
 
 /* Status lights become orbs too: the dot keeps its place in the layout and
    only its paint is hidden. */
-${K} span[data-state="done"][data-kat-orb-hidden],
-${K} span[data-state="warning"][data-kat-orb-hidden]{
+${K} [data-state="done"][data-kat-orb-hidden],
+${K} [data-state="warning"][data-kat-orb-hidden]{
   visibility:hidden !important;
 }
 
@@ -1538,7 +1553,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             if (!host) return
             const box = dot.getBoundingClientRect ? dot.getBoundingClientRect() : null
             const width = Math.round((box && box.width) || 0) || 10
-            const size = Math.max(12, width)
+            const size = Math.max(13, width)
             const orb = createOrb(size, config.label, {
               state: config.state,
               ink: tokenInk(config.ink, config.fallback),

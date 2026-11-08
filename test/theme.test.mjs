@@ -1120,6 +1120,17 @@ test('finished and warning states are orbs too, not bare rings', async () => {
     doneLater.dots.map((d) => Math.round(d.x)),
     'the finished orb must keep breathing and drifting; a frozen glyph reads as a stuck indicator',
   )
+  // At 12px a slow rotation moves less than a pixel, which reads as frozen on
+  // screen. The done orb needs a second channel - brightness and scale - that
+  // is visible at that size.
+  assert.notEqual(done.pulse, doneLater.pulse, 'the finished orb must visibly breathe in brightness')
+  assert.notEqual(done.breathe, doneLater.breathe, 'the finished orb must visibly breathe in size')
+  assert.ok(done.pulse >= 0.55 && done.pulse <= 1, 'the breathing must stay subtle, not flash')
+  const breaths = [0, 1.75, 3.5, 5.25].map((t) => orbDots(t, 12, { state: 'done' }).breathe)
+  assert.ok(
+    Math.max(...breaths) - Math.min(...breaths) > 0.15,
+    'the size breath must be large enough to see at 12px, or the green light looks frozen',
+  )
 
   const warn = orbDots(0.3, 14, { state: 'warning' })
   assert.equal(warn.state, 'warning')
