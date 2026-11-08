@@ -20,10 +20,13 @@ Black, square, mono, quiet.
 - **Motion.** Calm by default: chrome loops stop, one-shot transitions stay
   snappy. Progress indicators keep spinning so loading never looks finished.
 - **Thinking orb.** Working sessions, the boot screen and the composer mascot
-  show a dotted orb: points on a Fibonacci sphere, turned about a tilted axis
-  and shaded by depth. Three presets (16px session rows, 56px boot, 89px
-  composer), ink read from the label token, DPR capped at 2, paused off-screen,
-  and a still frame under reduced motion. Drawn on a plain 2D canvas, inspired
+  show a dotted orb. Two states: a Fibonacci sphere turned about a tilted axis,
+  and the *working* state - three rings, each on its own tilt and speed, so a
+  running session reads as a mechanism doing something rather than a ball of
+  dots. Rows and the boot splash use the working state; the composer mascot
+  uses the sphere. Three sizes (18px rows, 56px boot, 89px composer), ink read
+  from the label token, DPR capped at 2, paused off-screen, and a still frame
+  under reduced motion. Drawn on a plain 2D canvas, inspired
   by [thinking-orbs](https://rareformlabs.github.io/thinking-orbs/) (MIT, Jakub
   Antalik); no runtime dependency, so the bundle stays one file.
 - **Composer mascot.** The DeepSeek whale above the prompt box is replaced by

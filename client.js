@@ -341,8 +341,57 @@ window.__ModuleLoader__.load({
       return sparks
     }
 
+    /**
+     * The working state: three rings, each tilted on its own axis and turning
+     * at its own speed, so the figure reads as a mechanism doing something
+     * rather than a ball of dots. This is what a running session shows; the
+     * plain sphere reads as ornament.
+     */
+    const ORB_ORBITS = [
+      { count: 8, radius: 0.86, tiltX: 0.42, tiltZ: 0.2, speed: 1.05 },
+      { count: 7, radius: 0.72, tiltX: -0.62, tiltZ: 1.05, speed: -0.82 },
+      { count: 6, radius: 0.58, tiltX: 1.15, tiltZ: -0.4, speed: 1.3 },
+    ]
+
+    function orbWorkingDots(t, size) {
+      const c = size / 2
+      const weight = size <= 24 ? 0.085 : 0.02
+      const dots = []
+      for (let oi = 0; oi < ORB_ORBITS.length; oi++) {
+        const orbit = ORB_ORBITS[oi]
+        // At row size the full particle count merges into a blob: keep each
+        // ring sparse enough that its tilt is still legible.
+        const count = size <= 24 ? Math.max(4, Math.round(orbit.count * 0.6)) : orbit.count
+        const spin = t * orbit.speed
+        const cz = Math.cos(orbit.tiltZ)
+        const sz = Math.sin(orbit.tiltZ)
+        const cx = Math.cos(orbit.tiltX)
+        const sx = Math.sin(orbit.tiltX)
+        for (let i = 0; i < count; i++) {
+          const angle = spin + (i * Math.PI * 2) / count
+          const x0 = Math.cos(angle) * orbit.radius
+          const z0 = Math.sin(angle) * orbit.radius
+          // tilt about Z, then about X, so the three rings cross each other
+          const x1 = x0 * cz - 0 * sz
+          const y1 = x0 * sz + 0 * cz
+          const y2 = y1 * cx - z0 * sx
+          const z2 = y1 * sx + z0 * cx
+          const depth = (z2 + 1) / 2
+          dots.push({
+            x: c + x1 * c,
+            y: c - y2 * c,
+            r: Math.max(0.4, size * weight * (0.55 + depth * 0.9)),
+            a: 0.16 + depth * 0.84,
+            orbit: oi,
+          })
+        }
+      }
+      return dots
+    }
+
     function orbDots(t, size, options) {
       const playful = options !== undefined && options.playful === true
+      const state = options !== undefined && options.state === 'working' ? 'working' : 'sphere'
       const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
       const n = preset.dots
       const c = size / 2
@@ -353,7 +402,10 @@ window.__ModuleLoader__.load({
       const ct = Math.cos(preset.tilt)
       const st = Math.sin(preset.tilt)
       const dots = []
-      for (let i = 0; i < n; i++) {
+      if (state === 'working') {
+        dots.push(...orbWorkingDots(t, size))
+      }
+      for (let i = 0; state === 'sphere' && i < n; i++) {
         const y = 1 - (2 * (i + 0.5)) / n
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
         const phi = i * Math.PI * (3 - Math.sqrt(5))
@@ -373,6 +425,7 @@ window.__ModuleLoader__.load({
       }
       return {
         size,
+        state,
         dots,
         bob: playful ? Math.sin(t * 1.7) * size * 0.022 : 0,
         breathe: playful ? 1 + Math.sin(t * 1.15) * 0.034 : 1,
@@ -1055,7 +1108,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             if (!boot) return
             const spinner = boot.querySelector('[data-dsh-boot-spinner]')
             if (!spinner || done.has(spinner) || spinner.parentElement === null) return
-            const orb = createOrb(56, 'Loading the harness')
+            const orb = createOrb(56, 'Loading the harness', { state: 'working' })
             if (!orb) return
             done.add(spinner)
             spinner.setAttribute('data-kat-orb-hidden', '')
@@ -1071,8 +1124,8 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             const box = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null
             const width = Math.round((box && box.width) || 0) || 10
             const height = Math.round((box && box.height) || 0) || 10
-            const size = Math.max(16, width)
-            const orb = createOrb(size, 'Working')
+            const size = Math.max(18, width)
+            const orb = createOrb(size, 'Working', { state: 'working' })
             if (!orb) return
             done.add(svg)
             svg.setAttribute('data-kat-orb-hidden', '')

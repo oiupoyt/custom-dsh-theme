@@ -943,3 +943,55 @@ test('a session row with no indicator reclaims the space it was reserving', asyn
     'the host sets a min-width on that slot; without min-width:0 the collapse is ignored',
   )
 })
+
+test('the session list shows the working orb, not a plain sphere', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+
+  const sphere = orbDots(0.5, 16)
+  const working = orbDots(0.5, 16, { state: 'working' })
+
+  assert.equal(working.state, 'working')
+  assert.equal(sphere.state, 'sphere', 'the default state must stay explicit')
+
+  const orbits = new Set(working.dots.map((d) => d.orbit))
+  assert.equal(orbits.size, 3, 'the working orb is three tilted orbits, not a uniform lattice')
+  for (const index of orbits) {
+    const ring = working.dots.filter((d) => d.orbit === index)
+    assert.ok(ring.length >= 4, `orbit ${index} needs enough particles to read as a ring`)
+  }
+  // Row size keeps the rings sparse so their tilt survives the shrink; the
+  // composer size uses the full particle count.
+  assert.ok(working.dots.length <= 16, 'at 16px the rings must stay sparse or the tilt merges into a blob')
+  assert.ok(
+    orbDots(0.5, 89, { state: 'working' }).dots.length > working.dots.length,
+    'the large working orb is denser than the row one',
+  )
+
+  for (const dot of working.dots) {
+    assert.ok(dot.x >= 0 && dot.x <= 16 && dot.y >= 0 && dot.y <= 16, 'particles stay on the canvas')
+    assert.ok(dot.r > 0 && dot.r <= 3, 'particles stay small')
+    assert.ok(dot.a > 0 && dot.a <= 1, 'depth still shades opacity')
+  }
+
+  // A ring rotates: positions must move, and the sphere must not be reused.
+  const later = orbDots(1.6, 16, { state: 'working' })
+  const moved = working.dots.filter((d, i) => Math.abs(d.x - later.dots[i].x) > 0.2)
+  assert.ok(moved.length > working.dots.length / 2, 'every orbit must turn as the orb works')
+
+  assert.ok(
+    working.dots.length !== sphere.dots.length ||
+      working.dots.some((d, i) => Math.abs(d.x - sphere.dots[i].x) > 0.2),
+    'the working state must differ from the sphere it replaces',
+  )
+})
+
+test('session rows mount the working orb', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(
+    src,
+    /createOrb\([^)]*'Working'[^)]*state:\s*'working'/s,
+    'the row orb must be created in the working state; the plain sphere reads as decoration, not work',
+  )
+})
