@@ -740,8 +740,9 @@ test('the effort picker becomes a sliding segmented bar with accent fill and spr
 test('the effort enhancer can only match the effort list, and undoes itself if content changes', async () => {
   await boot()
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  assert.ok(
-    src.includes('/^(default|low|medium|high)$/i'),
+  assert.match(
+    src,
+    /const EFFORT_LABEL = \/\^\([a-z|]+\)\$\/i/,
     'effort labels must match exactly; a substring match hits model names like "o3 Mini High" and lays the model list out as a bar',
   )
   assert.ok(
@@ -994,4 +995,53 @@ test('session rows mount the working orb', async () => {
     /createOrb\([^)]*'Working'[^)]*state:\s*'working'/s,
     'the row orb must be created in the working state; the plain sphere reads as decoration, not work',
   )
+})
+
+/* ---- Verification findings ------------------------------------------------- */
+
+test('the effort matcher accepts the labels the host actually renders', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const line = src.split('\n').find((l) => l.includes('EFFORT_LABEL'))
+  assert.ok(line, 'the matcher must exist')
+  for (const label of ['off', 'max', 'default', 'low', 'high']) {
+    assert.match(line, new RegExp(label, 'i'), `the host renders "${label}"; a matcher without it silently drops the bar`)
+  }
+  // Still exact-match, every-radio: "o3 Mini High" must never qualify.
+  assert.match(line, /\^\(/, 'the matcher must stay anchored, or model names match')
+})
+
+test('dim text still clears AA on both substrates', async () => {
+  const { calls, sandbox } = await boot()
+  const kat = sandbox.__KAT_THEME__
+  for (const surface of ['soft', 'amoled', 'warm']) {
+    kat.setPref('surface', surface)
+    const t = calls.tokens[calls.tokens.length - 1].tokens
+    for (const [fg, bg] of [
+      ['--dsw-alias-label-dimmed', '--dsw-alias-bg-base'],
+      ['--dsw-alias-label-caption', '--dsw-alias-bg-layer-2'],
+    ]) {
+      for (const mode of ['dark', 'light']) {
+        const ratio = contrast(t[fg][mode], t[bg][mode])
+        assert.ok(
+          ratio >= 4.5,
+          `${fg} on ${bg} in ${mode} (${surface}) is ${ratio.toFixed(2)}:1; dim text is still text`,
+        )
+      }
+    }
+  }
+})
+
+test('an alpha-tinted ramp token follows the substrate swap', async () => {
+  const { calls, sandbox } = await boot()
+  const kat = sandbox.__KAT_THEME__
+  kat.setPref('surface', 'warm')
+  const warm = calls.tokens[calls.tokens.length - 1].tokens
+  const header = warm['--dsw-alias-menu-group-header-fill'].dark
+  assert.notEqual(
+    header,
+    '#101010f2',
+    'an alpha surface kept its amoled colour: the warm substrate still shows a black menu header',
+  )
+  assert.match(header, /^#[0-9a-f]{6}[0-9a-f]{2}$/i, 'the alpha suffix must survive the remap')
 })

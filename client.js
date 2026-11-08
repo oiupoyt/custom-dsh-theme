@@ -139,8 +139,13 @@ window.__ModuleLoader__.load({
       const stops = SURFACES[surfaceId]
       const out = {}
       for (const [name, pair] of Object.entries(tokens)) {
-        const stop = RAMP_KEYS[pair.dark]
-        out[name] = stop ? { dark: stops[stop], light: pair.light } : pair
+        // Eight-digit values are the same ramp colour carrying an alpha: remap
+        // the colour and keep the suffix, or a warm substrate keeps black menus.
+        const alpha = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(pair.dark)
+        const stop = RAMP_KEYS[alpha ? `#${alpha[1]}`.toLowerCase() : pair.dark]
+        out[name] = stop
+          ? { dark: alpha ? `${stops[stop]}${alpha[2]}` : stops[stop], light: pair.light }
+          : pair
       }
       return out
     }
@@ -182,8 +187,8 @@ window.__ModuleLoader__.load({
         '--dsw-alias-label-primary-inverted': pair('#0e0e0e', '#ffffff'),
         '--dsw-alias-label-secondary': pair('#a3a3a3', '#4a4a48'),
         '--dsw-alias-label-tertiary': pair('#8a8a8a', '#5c5c5a'),
-        '--dsw-alias-label-caption': pair('#7a7a7a', '#6a6a68'),
-        '--dsw-alias-label-dimmed': pair('#6b6b6b', '#8a8a88'),
+        '--dsw-alias-label-caption': pair('#8a8a8a', '#6a6a68'),
+        '--dsw-alias-label-dimmed': pair('#808080', '#6a6a68'),
         '--dsw-alias-label-shimmer': pair('#f2f2f24d', '#1010104d'),
         '--dsw-alias-label-deep-diving': pair(d.deep, l.brand),
         '--dsw-alias-label-deep-diving-shimmer': pair(d.hover, l.hover),
@@ -1004,7 +1009,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       // exactly, and the list is small. If a marked menu stops qualifying
       // (for example the host swaps in other content), the bar takes itself
       // off instead of staying on the wrong control.
-      const EFFORT_LABEL = /^(default|low|medium|high)$/i
+      const EFFORT_LABEL = /^(default|off|low|medium|high|max)$/i
       const stopEffortBars = (() => {
         try {
           if (typeof MutationObserver === 'undefined') return () => {}
