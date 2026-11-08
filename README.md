@@ -33,6 +33,13 @@ Black, square, mono, quiet.
   the orb, drawn where the sprite was. Only the sprite is hidden, so the host
   element and its click target stay. That orb is the playful one - it bobs on
   its own rhythm, breathes a few percent and sheds sparks.
+- **Status lights are orbs.** The finished dot becomes a settled orb in the
+  success colour, the warning dot a gently pulsing orb in the warn colour: the
+  dot keeps its slot, only its paint is hidden, so list spacing is unchanged.
+- **It stays put.** The orb is anchored to the composer card's corner, not to
+  claude-style's mascot node, which unmounts for stretches of a turn. The orb
+  stays visible while the mascot is gone, and returns to its state signal when
+  the mascot remounts.
 - **It follows the agent.** claude-style marks the mascot with
   `data-animation`, and the orb reads it: `building` shows the three-ring
   working state, `typing` a rolling waveform, `thinking`/`loading` a scan

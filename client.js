@@ -455,21 +455,28 @@ window.__ModuleLoader__.load({
       const playful = options !== undefined && options.playful === true
       const requested =
         options !== undefined && typeof options.state === 'string' ? options.state : 'sphere'
-      const state = ['working', 'wave', 'scan'].includes(requested) ? requested : 'sphere'
+      const state = ['working', 'wave', 'scan', 'done', 'warning'].includes(requested)
+        ? requested
+        : 'sphere'
+      // A finished session settles: the geometry is frozen at one pose.
+      const tt = state === 'done' ? 0.55 : t
+      const pulse = state === 'warning' ? 0.55 + 0.45 * Math.sin(t * 2.6) : 1
       const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
       const n = preset.dots
       const c = size / 2
       const radius = c * ORB_SCALE
-      const turn = t * preset.speed
+      const turn = tt * preset.speed
       const ca = Math.cos(turn)
       const sa = Math.sin(turn)
       const ct = Math.cos(preset.tilt)
       const st = Math.sin(preset.tilt)
       const dots = []
-      if (state === 'working') dots.push(...orbWorkingDots(t, size))
-      if (state === 'wave') dots.push(...orbWaveDots(t, size))
-      if (state === 'scan') dots.push(...orbScanDots(t, size))
-      for (let i = 0; state === 'sphere' && i < n; i++) {
+      if (state === 'working') dots.push(...orbWorkingDots(tt, size))
+      if (state === 'wave') dots.push(...orbWaveDots(tt, size))
+      if (state === 'scan') dots.push(...orbScanDots(tt, size))
+      // The status states are sphere geometry: done settles, warning pulses.
+      const usesSphere = state === 'sphere' || state === 'done' || state === 'warning'
+      for (let i = 0; usesSphere && i < n; i++) {
         const y = 1 - (2 * (i + 0.5)) / n
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
         const phi = i * Math.PI * (3 - Math.sqrt(5))
@@ -491,13 +498,29 @@ window.__ModuleLoader__.load({
         size,
         state,
         dots,
-        bob: playful ? Math.sin(t * 1.7) * size * 0.022 : 0,
-        breathe: playful ? 1 + Math.sin(t * 1.15) * 0.034 : 1,
+        pulse,
+        bob: playful ? Math.sin(tt * 1.7) * size * 0.022 : 0,
+        breathe: playful ? 1 + Math.sin(tt * 1.15) * 0.034 : 1,
         sparks: playful ? orbSparks(t, size) : [],
       }
     }
 
-    function orbInk() {
+    function orbInk(override) {
+      if (typeof override === 'string' && override.length > 0) return override
+      return tokenInk('--dsw-alias-label-primary', '#f2f2f2')
+    }
+
+    function tokenInk(name, fallback) {
+      try {
+        const value = getComputedStyle(document.body).getPropertyValue(name)
+        if (value && value.trim()) return value.trim()
+      } catch {
+        /* computed style unavailable: use the literal */
+      }
+      return fallback
+    }
+
+    function orbInkUnused() {
       try {
         const value = getComputedStyle(document.body).getPropertyValue('--dsw-alias-label-primary')
         if (value && value.trim()) return value.trim()
@@ -546,7 +569,7 @@ window.__ModuleLoader__.load({
         const draw = (t) => {
           const frame = orbDots(t, size, { ...options, state })
           ctx2d.clearRect(0, 0, size, size)
-          ctx2d.fillStyle = orbInk()
+          ctx2d.fillStyle = orbInk(options && options.ink)
           const c = size / 2
           ctx2d.save()
           // Bob and breathe around the orb's own centre, never the canvas corner.
@@ -554,7 +577,7 @@ window.__ModuleLoader__.load({
           ctx2d.scale(frame.breathe, frame.breathe)
           ctx2d.translate(-c, -c)
           for (const dot of frame.dots) {
-            ctx2d.globalAlpha = dot.a
+            ctx2d.globalAlpha = Math.min(1, dot.a * (frame.pulse === undefined ? 1 : frame.pulse))
             ctx2d.beginPath()
             ctx2d.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2)
             ctx2d.fill()
@@ -766,6 +789,22 @@ ${K} .kat-orb{
 ${K} .kat-orb-host{position:relative}
 ${K} svg[data-kat-orb-hidden]{visibility:hidden !important}
 ${K} [data-dsh-boot-orb]{position:static !important;margin:0 auto;display:block}
+
+/* Status lights become orbs too: the dot keeps its place in the layout and
+   only its paint is hidden. */
+${K} span[data-state="done"][data-kat-orb-hidden],
+${K} span[data-state="warning"][data-kat-orb-hidden]{
+  visibility:hidden !important;
+}
+
+/* The composer orb lives on the composer's own containing block, which exists
+   even while claude-style unmounts the mascot, so it does not blink out. */
+${K} .kat-composer-orb{
+  position:absolute !important;
+  z-index:2;
+  pointer-events:auto;
+  cursor:pointer;
+}
 ${K} [data-dsh-boot-spinner][data-kat-orb-hidden]{display:none !important}
 
 /* Boot screen: the shell paints a rounded card with a spinning ring. Square
@@ -797,9 +836,7 @@ ${K} .dsh-claude-deepy-sprite{
   visibility:hidden !important;
 }
 ${K} [data-kat-orb-deepy]{
-  position:absolute !important;
-  inset:0;margin:auto;
-  z-index:0;
+  z-index:2;
 }
 
 /* Idle sessions render an empty leading slot that still reserves its width,
@@ -1293,45 +1330,107 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             loading: 'scan',
             idle: 'sphere',
           }
-          let pokeOff = null
+          const stateFor = (deepy) =>
+            STATE_FOR_ANIMATION[(deepy && deepy.getAttribute('data-animation')) || ''] || 'sphere'
 
-          const syncMascot = () => {
-            const deepy = document.querySelector('.dsh-claude-deepy')
-            if (!deepy) return
-            const entry = live.find((item) => item.spinner === deepy)
-            if (!entry) return
-            const next = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || ''] || 'sphere'
-            entry.orb.setState(next)
+          let composerOrb = null
+
+          // The mascot is unmounted for stretches of a turn, and the orb must
+          // not leave with it: anchor to the block the mascot sits in, which
+          // outlives it, and fall back to the composer's positioned ancestor.
+          const composerAnchor = () => {
+            let el = document.querySelector('[class*="composerStack"]')
+            while (el && el !== document.body && getComputedStyle(el).position === 'static') {
+              el = el.parentElement
+            }
+            return el && el !== document.body ? el : null
           }
 
-          const mountMascotOrb = () => {
+          // The mascot sat at the composer card's top-right. Anchoring to the
+          // sticky seat and offsetting from the card keeps that spot stable
+          // while the card resizes with the prompt, without the card clipping it.
+          const placeComposerOrb = (element) => {
+            const anchor = element.parentElement
+            const card = document.querySelector('[data-composer-card]')
+            if (!anchor || !card) return
+            const a = anchor.getBoundingClientRect()
+            const c = card.getBoundingClientRect()
+            element.style.left = `${Math.round(c.right - a.left - element.offsetWidth - 8)}px`
+            element.style.top = `${Math.round(c.top - a.top - element.offsetHeight + 4)}px`
+          }
+
+          const mountComposerOrb = () => {
+            const anchor = composerAnchor()
+            if (!anchor) return
             const deepy = document.querySelector('.dsh-claude-deepy')
-            if (!deepy || done.has(deepy)) return
-            const box = deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
-            const edge = Math.min((box && box.width) || 104, (box && box.height) || 104)
-            const initial = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || ''] || 'sphere'
-            const orb = createOrb(Math.max(40, Math.round(edge * 0.86)), 'Thinking orb', {
+            if (composerOrb && composerOrb.element.isConnected) {
+              if (composerOrb.element.parentElement !== anchor) anchor.appendChild(composerOrb.element)
+              placeComposerOrb(composerOrb.element)
+              composerOrb.setState(stateFor(deepy))
+              return
+            }
+            const smooth = deepy && deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
+            const orb = createOrb(smooth && smooth.width ? Math.round(smooth.width * 0.86) : 89, 'Thinking orb', {
               playful: true,
-              state: initial,
+              state: stateFor(deepy),
             })
             if (!orb) return
-            done.add(deepy)
+            orb.element.classList.add('kat-composer-orb')
             orb.element.setAttribute('data-kat-orb-deepy', '')
-            deepy.appendChild(orb.element)
-            live.push({ orb, host: null, spinner: deepy })
+            anchor.appendChild(orb.element)
+            placeComposerOrb(orb.element)
             // The host's own bubble is inert in this build, so the orb answers
-            // a click itself: a spark ring, and it keeps the host click intact.
-            const onPoke = () => orb.poke()
-            deepy.addEventListener('pointerdown', onPoke, true)
-            pokeOff = () => deepy.removeEventListener('pointerdown', onPoke, true)
+            // a click itself.
+            orb.element.addEventListener('pointerdown', (event) => {
+              event.stopPropagation()
+              orb.poke()
+            })
+            composerOrb = orb
+          }
+
+          const STATUS_ORBS = {
+            done: { state: 'done', ink: '--dsw-alias-state-success-primary', fallback: '#6ee7a8', label: 'Finished' },
+            warning: { state: 'warning', ink: '--dsw-alias-state-warn-primary', fallback: '#fbbf24', label: 'Needs attention' },
+          }
+
+          const mountStatusOrb = (dot) => {
+            if (done.has(dot)) return
+            const config = STATUS_ORBS[dot.getAttribute('data-state')]
+            if (!config) return
+            const host = dot.parentElement
+            if (!host) return
+            const box = dot.getBoundingClientRect ? dot.getBoundingClientRect() : null
+            const width = Math.round((box && box.width) || 0) || 10
+            const size = Math.max(12, width)
+            const orb = createOrb(size, config.label, {
+              state: config.state,
+              ink: tokenInk(config.ink, config.fallback),
+            })
+            if (!orb) return
+            done.add(dot)
+            dot.setAttribute('data-kat-orb-hidden', '')
+            host.classList.add('kat-orb-host')
+            const hostBox = host.getBoundingClientRect ? host.getBoundingClientRect() : null
+            if (box && hostBox) {
+              orb.element.style.left = `${box.left - hostBox.left - (size - width) / 2}px`
+              orb.element.style.top = `${box.top - hostBox.top - (size - width) / 2}px`
+            } else {
+              orb.element.style.left = '0px'
+              orb.element.style.top = '0px'
+            }
+            orb.element.setAttribute('data-kat-orb-status', config.state)
+            host.appendChild(orb.element)
+            live.push({ orb, host, spinner: dot })
           }
 
           const scan = () => {
             try {
               prune()
               mountBootOrb()
-              mountMascotOrb()
-              syncMascot()
+              mountComposerOrb()
+              for (const dot of document.querySelectorAll('[data-state="done"],[data-state="warning"]')) {
+                mountStatusOrb(dot)
+              }
               for (const svg of document.querySelectorAll('svg[data-state="ongoing"]')) {
                 mountRowOrb(svg)
               }
@@ -1352,9 +1451,21 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             })
           }
 
+          const onResize = () => {
+            if (composerOrb && composerOrb.element.isConnected) placeComposerOrb(composerOrb.element)
+          }
+          if (typeof addEventListener === 'function') addEventListener('resize', onResize)
+
           return () => {
             if (observer) observer.disconnect()
-            if (pokeOff) pokeOff()
+            if (typeof removeEventListener === 'function') removeEventListener('resize', onResize)
+            if (composerOrb) {
+              try {
+                composerOrb.dispose()
+              } catch {
+                /* already gone */
+              }
+            }
             for (const entry of live) {
               try {
                 entry.orb.dispose()

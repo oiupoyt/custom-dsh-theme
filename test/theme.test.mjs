@@ -1100,3 +1100,54 @@ test('the mascot orb switches state from the host and reacts to a poke', async (
   assert.ok(/setState/.test(src), 'the orb must switch state in place instead of being recreated')
   assert.ok(/title/.test(src), 'the orb must expose the current state on hover')
 })
+
+/* ---- Status orbs, and an orb that outlives the mascot --------------------- */
+
+test('finished and warning states are orbs too, not bare rings', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+
+  const done = orbDots(0.3, 14, { state: 'done' })
+  assert.equal(done.state, 'done')
+  assert.ok(done.dots.length > 0, 'the status states still need geometry; an empty frame draws nothing')
+  assert.ok(
+    orbDots(0.3, 14, { state: 'warning' }).dots.length > 0,
+    'the warning orb is a sphere that pulses, so it must have dots',
+  )
+  const doneLater = orbDots(2.1, 14, { state: 'done' })
+  assert.deepEqual(
+    done.dots.map((d) => Math.round(d.x)),
+    doneLater.dots.map((d) => Math.round(d.x)),
+    'a finished session must not keep moving; the orb settles',
+  )
+
+  const warn = orbDots(0.3, 14, { state: 'warning' })
+  assert.equal(warn.state, 'warning')
+  assert.notEqual(warn.pulse.toFixed(3), orbDots(0.9, 14, { state: 'warning' }).pulse.toFixed(3), 'warning needs a pulse')
+  assert.ok(warn.pulse >= 0.4 && warn.pulse <= 1)
+})
+
+test('the status dots are replaced in place, with the colour still carrying meaning', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  for (const state of ['done', 'warning']) {
+    assert.match(src, new RegExp(`data-state="${state}"`), `the ${state} dot must be picked up by its data-state`)
+  }
+  assert.ok(/data-kat-orb-status/.test(src), 'status orbs need their own marker for teardown')
+  assert.ok(/--dsw-alias-state-success-primary/.test(src), 'the done orb must keep the success colour')
+  assert.ok(/--dsw-alias-state-warn-primary/.test(src), 'the warning orb must keep the warn colour')
+})
+
+test('the composer orb survives the mascot leaving the DOM', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(/composerStack/.test(src), 'the orb must anchor to the composer stack, which outlives the mascot')
+  assert.ok(
+    /data-composer-card/.test(src) && /getBoundingClientRect/.test(src),
+    'the orb has to be placed from the composer card box, or it drifts when the mascot is absent',
+  )
+  assert.ok(
+    /kat-composer-orb/.test(src),
+    'the fallback orb needs its own class so it can be positioned and removed',
+  )
+})
