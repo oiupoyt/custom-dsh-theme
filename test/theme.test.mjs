@@ -1045,3 +1045,58 @@ test('an alpha-tinted ramp token follows the substrate swap', async () => {
   )
   assert.match(header, /^#[0-9a-f]{6}[0-9a-f]{2}$/i, 'the alpha suffix must survive the remap')
 })
+
+/* ---- The mascot orb follows what the agent is doing ---------------------- */
+
+test('the orb has distinct states for the work it is reporting', async () => {
+  const { sandbox } = await boot()
+  const orbDots = sandbox.__KAT_THEME__.orbDots
+
+  const wave = orbDots(0.4, 89, { state: 'wave' })
+  assert.equal(wave.state, 'wave')
+  const later = orbDots(1.1, 89, { state: 'wave' })
+  assert.notDeepEqual(
+    wave.dots.map((d) => Math.round(d.y)),
+    later.dots.map((d) => Math.round(d.y)),
+    'the waveform must move; a still line does not read as activity',
+  )
+  assert.ok(
+    wave.dots.length >= 9,
+    'the wave needs enough points to read as a signal',
+  )
+
+  const scan = orbDots(0.4, 89, { state: 'scan' })
+  assert.equal(scan.state, 'scan')
+  const alphas = scan.dots.map((d) => d.a)
+  assert.ok(
+    Math.max(...alphas) - Math.min(...alphas) > 0.4,
+    'a scan needs a bright meridian against dim dots, or it is just a sphere',
+  )
+  const laterScan = orbDots(1.6, 89, { state: 'scan' })
+  const brightIndex = (frame) => frame.dots.findIndex((d) => d.a === Math.max(...frame.dots.map((x) => x.a)))
+  assert.notEqual(brightIndex(scan), brightIndex(laterScan), 'the bright meridian must travel')
+})
+
+test('the mascot orb switches state from the host and reacts to a poke', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+
+  assert.ok(
+    /data-animation/.test(src),
+    'claude-style marks the mascot with data-animation (typing/building/...); that is the state signal',
+  )
+  for (const [value, state] of [
+    ['building', 'working'],
+    ['typing', 'wave'],
+    ['thinking', 'scan'],
+  ]) {
+    assert.match(
+      src,
+      new RegExp(`${value}[\\s\\S]{0,80}${state}`),
+      `${value} must map to the ${state} state, or the orb ignores what the agent is doing`,
+    )
+  }
+  assert.ok(/pointerdown/.test(src), 'the orb must react to a click, since the mascot bubble is inert here')
+  assert.ok(/setState/.test(src), 'the orb must switch state in place instead of being recreated')
+  assert.ok(/title/.test(src), 'the orb must expose the current state on hover')
+})

@@ -30,10 +30,14 @@ Black, square, mono, quiet.
   by [thinking-orbs](https://rareformlabs.github.io/thinking-orbs/) (MIT, Jakub
   Antalik); no runtime dependency, so the bundle stays one file.
 - **Composer mascot.** The DeepSeek whale above the prompt box is replaced by
-  the orb, drawn where the sprite was. Only the sprite is hidden: the host
-  element and its click target stay, so the mascot's bubble still works. That
-  orb is the playful one - it bobs on its own rhythm, breathes a few percent
-  and sheds sparks.
+  the orb, drawn where the sprite was. Only the sprite is hidden, so the host
+  element and its click target stay. That orb is the playful one - it bobs on
+  its own rhythm, breathes a few percent and sheds sparks.
+- **It follows the agent.** claude-style marks the mascot with
+  `data-animation`, and the orb reads it: `building` shows the three-ring
+  working state, `typing` a rolling waveform, `thinking`/`loading` a scan
+  meridian, anything else the resting sphere. Hovering the orb names the
+  current state, and clicking it throws a ring of sparks.
 - **List spacing.** A session row reserves a status-light column only when it
   has a status light. Idle rows collapse that column instead of showing a hole,
   so the list reads ragged-left where it used to read as broken.

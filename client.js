@@ -394,9 +394,68 @@ window.__ModuleLoader__.load({
       return dots
     }
 
+    /** Typing/streaming: a rolling waveform, the shape of something arriving. */
+    function orbWaveDots(t, size) {
+      const columns = size <= 24 ? 7 : 13
+      const mid = size / 2
+      const amp = size * 0.17
+      const span = size * 0.66
+      const weight = size <= 24 ? 0.05 : 0.02
+      const dots = []
+      for (let i = 0; i < columns; i++) {
+        const x = size * 0.17 + ((i + 0.5) * span) / columns
+        const phase = (i / columns) * Math.PI * 2
+        const lift = Math.sin(t * 3.1 + phase) * Math.sin(t * 1.1 + phase * 0.5)
+        const depth = 0.5 + 0.5 * Math.sin(t * 3.1 + phase)
+        dots.push({
+          x,
+          y: mid + lift * amp,
+          r: Math.max(0.4, size * weight * (0.6 + depth * 0.8)),
+          a: 0.25 + depth * 0.75,
+        })
+      }
+      return dots
+    }
+
+    /** Searching: the same sphere, lit by a meridian that sweeps across it. */
+    function orbScanDots(t, size) {
+      const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
+      const n = preset.dots
+      const c = size / 2
+      const radius = c * ORB_SCALE
+      const turn = t * 0.35
+      const sweep = (t * 1.15) % (Math.PI * 2)
+      const ct = Math.cos(preset.tilt)
+      const st = Math.sin(preset.tilt)
+      const dots = []
+      for (let i = 0; i < n; i++) {
+        const y = 1 - (2 * (i + 0.5)) / n
+        const ring = Math.sqrt(Math.max(0, 1 - y * y))
+        const phi = i * Math.PI * (3 - Math.sqrt(5))
+        const x0 = Math.cos(phi + turn) * ring
+        const z0 = Math.sin(phi + turn) * ring
+        const y1 = y * ct - z0 * st
+        const z2 = y * st + z0 * ct
+        const depth = (z2 + 1) / 2
+        // Distance from the sweep line drives the brightness: one travelling
+        // meridian lights the globe, everything else stays dim.
+        const delta = Math.abs(((Math.atan2(z2, x0) - sweep + Math.PI * 3) % (Math.PI * 2)) - Math.PI)
+        const lit = Math.max(0, 1 - delta / 0.9)
+        dots.push({
+          x: c + x0 * radius,
+          y: c - y1 * radius,
+          r: Math.max(0.4, size * preset.weight * (0.55 + depth * 0.9) * (1 + lit * 0.5)),
+          a: Math.min(1, 0.14 + depth * 0.4 + lit * 0.75),
+        })
+      }
+      return dots
+    }
+
     function orbDots(t, size, options) {
       const playful = options !== undefined && options.playful === true
-      const state = options !== undefined && options.state === 'working' ? 'working' : 'sphere'
+      const requested =
+        options !== undefined && typeof options.state === 'string' ? options.state : 'sphere'
+      const state = ['working', 'wave', 'scan'].includes(requested) ? requested : 'sphere'
       const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
       const n = preset.dots
       const c = size / 2
@@ -407,9 +466,9 @@ window.__ModuleLoader__.load({
       const ct = Math.cos(preset.tilt)
       const st = Math.sin(preset.tilt)
       const dots = []
-      if (state === 'working') {
-        dots.push(...orbWorkingDots(t, size))
-      }
+      if (state === 'working') dots.push(...orbWorkingDots(t, size))
+      if (state === 'wave') dots.push(...orbWaveDots(t, size))
+      if (state === 'scan') dots.push(...orbScanDots(t, size))
       for (let i = 0; state === 'sphere' && i < n; i++) {
         const y = 1 - (2 * (i + 0.5)) / n
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
@@ -449,6 +508,13 @@ window.__ModuleLoader__.load({
     }
 
     /** Returns { element, dispose } or null when the platform cannot draw. */
+    const ORB_STATE_LABELS = {
+      sphere: 'Idle',
+      working: 'Working',
+      wave: 'Writing',
+      scan: 'Searching',
+    }
+
     function createOrb(size, label, options) {
       try {
         if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null
@@ -469,8 +535,16 @@ window.__ModuleLoader__.load({
         canvas.style.height = `${size}px`
         ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0)
 
+        let state = options !== undefined && typeof options.state === 'string' ? options.state : 'sphere'
+        let pokeAt = -1
+        const clock = () =>
+          typeof performance === 'object' && performance !== null && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()
+        const POKE_MS = 1400
+
         const draw = (t) => {
-          const frame = orbDots(t, size, options)
+          const frame = orbDots(t, size, { ...options, state })
           ctx2d.clearRect(0, 0, size, size)
           ctx2d.fillStyle = orbInk()
           const c = size / 2
@@ -491,6 +565,22 @@ window.__ModuleLoader__.load({
             ctx2d.arc(spark.x, spark.y, spark.r, 0, Math.PI * 2)
             ctx2d.fill()
           }
+          // A poke throws a ring of sparks out of the orb and fades it.
+          if (pokeAt >= 0) {
+            const age = (clock() - pokeAt) / 1000
+            if (age >= 0 && age < POKE_MS / 1000) {
+              for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2
+                const radius = size * (0.14 + age * 0.62)
+                ctx2d.globalAlpha = Math.max(0, 1 - age / (POKE_MS / 1000)) * 0.85
+                ctx2d.beginPath()
+                ctx2d.arc(c + Math.cos(angle) * radius, c + Math.sin(angle) * radius, Math.max(0.6, size * 0.019), 0, Math.PI * 2)
+                ctx2d.fill()
+              }
+            } else if (age >= POKE_MS / 1000) {
+              pokeAt = -1
+            }
+          }
           ctx2d.restore()
           ctx2d.globalAlpha = 1
         }
@@ -499,16 +589,23 @@ window.__ModuleLoader__.load({
           typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
         if (still || typeof requestAnimationFrame !== 'function') {
           draw(0.65)
-          return { element: canvas, dispose() {} }
+          return {
+            element: canvas,
+            setState() {},
+            poke() {},
+            dispose() {},
+          }
         }
 
         let frame = 0
         let startedAt = 0
+        let lastTime = 0
         let visible = true
         const step = (now) => {
           if (!visible) return
           if (!startedAt) startedAt = now
-          draw((now - startedAt) / 1000)
+          lastTime = (now - startedAt) / 1000
+          draw(lastTime)
           frame = requestAnimationFrame(step)
         }
         frame = requestAnimationFrame(step)
@@ -532,8 +629,31 @@ window.__ModuleLoader__.load({
           observer.observe(canvas)
         }
 
+        const applyState = () => {
+          canvas.setAttribute('data-kat-orb-state', state)
+          canvas.title = ORB_STATE_LABELS[state] || state
+          if (canvas.setAttribute) canvas.setAttribute('aria-label', ORB_STATE_LABELS[state] || label || 'Working')
+        }
+        applyState()
+
         return {
           element: canvas,
+          setState(next) {
+            if (typeof next !== 'string' || next === state) return
+            state = next
+            applyState()
+          },
+          poke() {
+            pokeAt = clock()
+            const pokes = Number(canvas.getAttribute('data-kat-orb-pokes') || 0) + 1
+            canvas.setAttribute('data-kat-orb-pokes', String(pokes))
+            // A paused orb still owes the tap a frame.
+            if (typeof requestAnimationFrame === 'function') {
+              requestAnimationFrame(() => {
+                frame = requestAnimationFrame(step)
+              })
+            }
+          },
           dispose() {
             visible = false
             if (observer) observer.disconnect()
@@ -1163,19 +1283,47 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             }
           }
 
+          // claude-style already knows what the agent is doing: it marks the
+          // mascot with data-animation. Reading that is what makes the orb
+          // correspond to the model's state instead of spinning generically.
+          const STATE_FOR_ANIMATION = {
+            building: 'working',
+            typing: 'wave',
+            thinking: 'scan',
+            loading: 'scan',
+            idle: 'sphere',
+          }
+          let pokeOff = null
+
+          const syncMascot = () => {
+            const deepy = document.querySelector('.dsh-claude-deepy')
+            if (!deepy) return
+            const entry = live.find((item) => item.spinner === deepy)
+            if (!entry) return
+            const next = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || ''] || 'sphere'
+            entry.orb.setState(next)
+          }
+
           const mountMascotOrb = () => {
             const deepy = document.querySelector('.dsh-claude-deepy')
             if (!deepy || done.has(deepy)) return
             const box = deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
             const edge = Math.min((box && box.width) || 104, (box && box.height) || 104)
+            const initial = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || ''] || 'sphere'
             const orb = createOrb(Math.max(40, Math.round(edge * 0.86)), 'Thinking orb', {
               playful: true,
+              state: initial,
             })
             if (!orb) return
             done.add(deepy)
             orb.element.setAttribute('data-kat-orb-deepy', '')
             deepy.appendChild(orb.element)
             live.push({ orb, host: null, spinner: deepy })
+            // The host's own bubble is inert in this build, so the orb answers
+            // a click itself: a spark ring, and it keeps the host click intact.
+            const onPoke = () => orb.poke()
+            deepy.addEventListener('pointerdown', onPoke, true)
+            pokeOff = () => deepy.removeEventListener('pointerdown', onPoke, true)
           }
 
           const scan = () => {
@@ -1183,6 +1331,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               prune()
               mountBootOrb()
               mountMascotOrb()
+              syncMascot()
               for (const svg of document.querySelectorAll('svg[data-state="ongoing"]')) {
                 mountRowOrb(svg)
               }
@@ -1195,11 +1344,17 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           let observer = null
           if (typeof MutationObserver === 'function') {
             observer = new MutationObserver(scan)
-            observer.observe(document.body, { childList: true, subtree: true })
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['data-animation'],
+            })
           }
 
           return () => {
             if (observer) observer.disconnect()
+            if (pokeOff) pokeOff()
             for (const entry of live) {
               try {
                 entry.orb.dispose()
