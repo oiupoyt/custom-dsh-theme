@@ -7,18 +7,35 @@ Black, square, mono, quiet.
 
 ## What it changes
 
-- **Colour.** True black ground, `#0e0e0e` panels, `#1f1f1f` hairlines. Sky is
-  the default accent; emerald and a plain mono variant are one click away.
+- **Colour.** A soft black ground (`#0b0b0c`) with `#141417` panels and
+  `#2a2b31` hairlines, because pure black flattens every raised surface into
+  one void at full-screen size. Settings, **Black**, swaps the whole ramp:
+  **Amoled** (pure `#000000`), **Soft** (the default neutral charcoal) and
+  **Warm** (a brown-leaning black). Sky is the default accent; emerald and a
+  plain mono variant are one click away.
 - **Shape.** Every corner is square, enforced on every element and pseudo
   element, because the host exposes no radius token for most of its surfaces.
 - **Type.** JetBrains Mono for chrome and code. Answer text stays in a neutral
   sans unless you switch it to mono.
 - **Motion.** Calm by default: chrome loops stop, one-shot transitions stay
   snappy. Progress indicators keep spinning so loading never looks finished.
+- **Thinking orb.** The working-session indicator and the boot screen show a
+  dotted orb instead of a ring: points on a Fibonacci sphere, turned about a
+  tilted axis and shaded by depth. Two presets (16px rows, 56px boot), ink read
+  from the label token, DPR capped at 2, paused off-screen, and a still frame
+  under reduced motion. Drawn on a plain 2D canvas, inspired by
+  [thinking-orbs](https://rareformlabs.github.io/thinking-orbs/) (MIT, Jakub
+  Antalik); no runtime dependency, so the bundle stays one file.
+- **Top bar.** One compact band: the session title, mode chips and utility
+  icons on a 32px row, the view tabs on a 32px rail below it, one hairline
+  under the band, mono labels, and a single accent underline on the active tab.
+- **Header.** The image-gen "Gallery" chip is hidden. The plugin stays mounted
+  and keeps its tools and its Image Studio entry point.
 
 Both light and dark are supported. Dark is the intended look.
 
 ![dark](docs/preview-dark.png)
+![boot](docs/preview-boot.png)
 ![light](docs/preview-light.png)
 
 ## Install
@@ -61,3 +78,43 @@ and are ignored once the bundle is gone. Clear that key to start fresh.
   broken page.
 - No bundler, no build step, no dependencies. `client.js` is loaded as-is.
 - Tests: `node --test`
+
+## Top bar
+
+The top bar is drawn by the host header plus this theme. It assumes two Claude
+Style switches are OFF, under **Settings, Claude Style, Conversation**:
+
+- **Chat / Trajectory tabs**
+- **Header in the title bar**
+
+Both lift the tab strip onto the title line and move it with a computed offset.
+With more than two views that produced floating, clipped tabs. Turned off, the
+host draws its own two rows, and this theme makes them one compact band: a 32px
+title row, a 32px view-tab rail, a 1px hairline bottom border, mono labels, and
+one accent underline on the active tab. Every registered view shows inline; the
+"More conversation views" menu was removed at the host bundle level (see Host
+top-bar override below).
+
+The image-gen gallery-chip rule in the stylesheet is a fallback: the installed
+image-gen client also carries a `__DSH_HIDE_IMAGE_GALLERY__` flag, so the chip
+stays gone even if load order changes. `generate_image` is unaffected.
+
+## Host top-bar override
+
+DSH 0.2.2-rc.1 hides Conversation View tabs behind a "More conversation views"
+menu and caps the visible tabs by header width. To keep Chat, Trajectory,
+Context, Web, Fleet and any other registered view inline, the conversation
+region registration was removed from the installed host bundle:
+
+```
+~/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-entry-customization/lib/client.js
+```
+
+That file is outside this package, so a DSH upgrade restores the folding. The
+workspace guard test `projects/tests/dsh-topbar.test.mjs` fails when either this
+override or the gallery-chip rule is lost:
+
+```sh
+node "/home/oiupoyt/my stuff yea/projects/tests/dsh-topbar.test.mjs"
+```
+

@@ -158,7 +158,7 @@ async function boot() {
   module.apply(ctx)
   assert.deepEqual([...module.inject].sort(), ['slots', 'theme'])
 
-  return { calls, module }
+  return { calls, module, sandbox }
 }
 
 test('registers a theme token layer with a light/dark pair for every token', async () => {
@@ -214,17 +214,30 @@ test('light mode is a distinct palette, not dark values reused', async () => {
 })
 
 test('paints the obsidian signature on the dark palette', async () => {
-  const { calls } = await boot()
+  const { calls, sandbox } = await boot()
   const t = calls.tokens[0].tokens
-  assert.equal(t['--dsw-alias-bg-base'].dark, '#000000')
-  assert.equal(t['--dsw-alias-bg-layer-2'].dark, '#0e0e0e')
-  assert.equal(t['--dsw-alias-border-l1'].dark, '#1f1f1f')
-  assert.equal(t['--dsw-alias-border-l2'].dark, '#1f1f1f')
+  // The substrate is a choice now, so the invariant is the step between
+  // surfaces, not one literal black: base, then a raised panel, then a hairline.
+  const base = luminance(t['--dsw-alias-bg-base'].dark)
+  assert.ok(base < 0.01, 'the default substrate must still read as black, not grey')
+  assert.ok(
+    luminance(t['--dsw-alias-bg-layer-2'].dark) > base,
+    'panels must sit above the page, or every surface flattens into one void',
+  )
+  assert.ok(
+    luminance(t['--dsw-alias-border-l1'].dark) > luminance(t['--dsw-alias-bg-layer-2'].dark),
+    'hairlines must be visible against the panels they separate',
+  )
+  assert.equal(t['--dsw-alias-border-l1'].dark, t['--dsw-alias-border-l2'].dark)
   assert.equal(t['--dsw-alias-label-primary'].dark, '#f2f2f2')
   assert.equal(t['--dsw-alias-brand-primary'].dark, '#7dd3fc')
   assert.equal(t['--dsw-alias-state-success-primary'].dark, '#6ee7a8')
   assert.equal(t['--dsw-alias-state-error-primary'].dark, '#f87171')
-  assert.equal(t['--dsw-specific-sidebar-fill'].dark, '#000000')
+  assert.equal(
+    t['--dsw-specific-sidebar-fill'].dark,
+    t['--dsw-alias-bg-base'].dark,
+    'the sidebar is the page, not a panel',
+  )
 })
 
 test('light mode stays square and legible on paper neutrals', async () => {
@@ -285,6 +298,51 @@ test('squares corners with !important, because claude-style rounds with !importa
       `border-radius "${decl}" must be !important to outrank claude-style's rounded !important rules`,
     )
   }
+})
+
+test('hides the image-gen gallery chip while leaving the plugin mounted', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const rule = rules(css).find(({ selector }) => selector.includes('button[title="Image Studio Gallery"]'))
+  assert.ok(rule, 'the sheet must target the gallery chip button')
+  assert.match(rule.body, /display:\s*none\s*!\s*important/i, 'the chip must be hidden with !important')
+  // The hide is a stylesheet rule, not an unmount: the plugin's tool and other
+  // entry points are untouched.
+  assert.ok(
+    !calls.slots.some(({ options }) => options.id === 'dsh-image-gen-gallery-chip'),
+    'the theme must not register or unregister host plugin slots',
+  )
+})
+
+test('the conversation header is one ruled band with a 32px tab rail', async () => {
+  const { calls } = await boot()
+  const list = rules(calls.css.join('\n'))
+  const endsWith = (suffix) => ({ selector }) => selector.endsWith(suffix)
+  const body = (suffix) => {
+    const rule = list.find((entry) => entry.selector.endsWith(suffix))
+    assert.ok(rule, `missing rule for ${suffix}`)
+    return rule.body
+  }
+
+  const header = list.find(({ selector }) => / header\[data-window-drag\]$/.test(selector))
+  assert.ok(header, 'the sheet must draw the conversation header band')
+  assert.match(header.body, /border-bottom:\s*1px solid/, 'the band needs one hairline bottom border')
+  assert.match(header.body, /min-height:\s*0/, 'the host 76px min-height must be released')
+
+  assert.match(body(' [class*="titleRow"]'), /min-height:\s*32px/, 'title row is a 32px row')
+  assert.match(body(' [class*="_tabs"]'), /min-height:\s*32px/, 'tab rail is a 32px row')
+  assert.match(body(' [data-conversation-tabs] > button'), /height:\s*32px/, 'each view tab fills the rail')
+  assert.match(
+    body(' :is([class*="headerActions"],[class*="headerUtilities"]) button'),
+    /height:\s*26px/,
+    'header utility buttons are one 26px size',
+  )
+
+  const activeUnderline = list.find(
+    ({ selector, body: ruleBody }) => selector.endsWith('[data-conversation-tabs] > button[aria-selected="true"]:after') && /background:/.test(ruleBody),
+  )
+  assert.ok(activeUnderline, 'the active tab needs its underline rule')
+  assert.match(activeUnderline.body, /--dsw-alias-brand-primary/, 'the active underline uses the accent token')
 })
 
 /** Split a stylesheet into { selector, body } rules (one nesting level). */
@@ -701,5 +759,121 @@ test('the effort enhancer can only match the effort list, and undoes itself if c
   assert.ok(
     /removeAttribute\('data-kat-effort-bar'\)/.test(src),
     'if a menu stops being the effort list, the enhancer must take the bar off instead of leaving it on the model selector',
+  )
+})
+
+/* ---- Substrate choice ---------------------------------------------------- */
+
+test('the black substrate is a setting: amoled, soft and warm', async () => {
+  const { calls, sandbox } = await boot()
+  const kat = sandbox.__KAT_THEME__
+  assert.ok(kat, 'the theme must expose its prefs for the settings page')
+  assert.equal(kat.prefs.surface, 'soft', 'the comfortable black is the default; amoled reads as a void')
+
+  const baseOf = (entry) => entry.tokens['--dsw-alias-bg-base']
+  assert.equal(baseOf(calls.tokens[0]).dark, '#0b0b0c', 'the default substrate must not be pure black')
+
+  kat.setPref('surface', 'amoled')
+  const amoled = calls.tokens[calls.tokens.length - 1].tokens
+  assert.equal(amoled['--dsw-alias-bg-base'].dark, '#000000', 'amoled must stay available')
+  assert.equal(
+    amoled['--dsw-alias-bg-base'].light,
+    '#f4f4f2',
+    'the substrate choice is a dark-mode choice; light mode must not shift',
+  )
+
+  kat.setPref('surface', 'warm')
+  const warm = calls.tokens[calls.tokens.length - 1].tokens
+  assert.notEqual(warm['--dsw-alias-bg-base'].dark, '#000000')
+  assert.notEqual(
+    warm['--dsw-alias-bg-base'].dark,
+    amoled['--dsw-alias-bg-base'].dark,
+    'warm and amoled must be visibly different substrates',
+  )
+  // Each substrate still has to carry readable text, not just look different.
+  for (const name of ['warm', 'soft', 'amoled']) {
+    kat.setPref('surface', name)
+    const t = calls.tokens[calls.tokens.length - 1].tokens
+    const ratio = contrast(t['--dsw-alias-bg-base'].dark, t['--dsw-alias-label-primary'].dark)
+    assert.ok(ratio >= 4.5, `${name} substrate must keep body text at AA, got ${ratio.toFixed(2)}:1`)
+  }
+})
+
+test('the settings page offers the substrate choice next to the accent', async () => {
+  const { calls } = await boot()
+  const page = calls.slots.find((s) => s.options.name === 'settings.section')
+  const text = JSON.stringify(page.component({ close() {} }))
+  assert.match(text, /Black/i, 'the settings page must name the substrate control')
+  for (const word of ['Amoled', 'Soft', 'Warm']) {
+    assert.match(text, new RegExp(word, 'i'), `the substrate control must offer ${word}`)
+  }
+})
+
+/* ---- Thinking orb ------------------------------------------------------- */
+
+test('the working indicator orb is a dotted sphere, drawn from rotation', async () => {
+  const { sandbox } = await boot()
+  const kat = sandbox.__KAT_THEME__
+  assert.equal(typeof kat.orbDots, 'function', 'the orb must expose its frame maths for the sidebar and the boot screen')
+
+  const small = kat.orbDots(0, 16)
+  const large = kat.orbDots(0, 64)
+  assert.ok(small.dots.length >= 20, 'the small orb needs enough dots to read as a sphere')
+  assert.ok(large.dots.length > small.dots.length, 'the large orb is its own preset, not a scaled-up small one')
+
+  for (const dot of small.dots) {
+    assert.ok(dot.x >= 0 && dot.x <= 16, 'dots must stay inside the canvas box')
+    assert.ok(dot.y >= 0 && dot.y <= 16, 'dots must stay inside the canvas box')
+    assert.ok(dot.r > 0 && dot.r <= 3, 'dot radius must stay small enough to read as dots')
+    assert.ok(dot.a > 0 && dot.a <= 1, 'depth must map to a usable opacity')
+  }
+
+  // A sphere looks identical after a half turn only if it is not rotating; the
+  // side-by-side comparison catches a frozen frame that still passes as a orb.
+  const later = kat.orbDots(1.7, 16)
+  const moved = small.dots.filter((d, i) => Math.abs(d.x - later.dots[i].x) > 0.5)
+  assert.ok(moved.length > small.dots.length / 3, 'most dots must move as the orb turns')
+})
+
+test('orbs replace the host spinner without disturbing its layout, and are removed on teardown', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(/data-kat-orb/.test(src), 'injected orbs must be marked so teardown can find them')
+  assert.ok(
+    /svg\[data-state="ongoing"\]/.test(src),
+    'the sidebar working indicator is still the host svg; the orb must find it rather than guess a class',
+  )
+  assert.ok(
+    /Math\.min\([^)]*devicePixelRatio[^)]*2\s*\)|Math\.min\(2,/.test(src),
+    'device pixel ratio must be capped, or the orb burns pixels on retina for no visible gain',
+  )
+  assert.ok(
+    /IntersectionObserver/.test(src),
+    'off-screen orbs must pause, since the sidebar keeps many session rows mounted',
+  )
+  assert.ok(
+    /prefers-reduced-motion/.test(src),
+    'reduced motion must render a still frame instead of an animation',
+  )
+  assert.ok(
+    /removeChild|\.remove\(\)/.test(src),
+    'teardown must remove the injected canvases',
+  )
+  assert.ok(
+    /isConnected/.test(src),
+    'a finished session drops its spinner but keeps the row: the orb must be pruned when its spinner leaves, or it spins on an idle session forever',
+  )
+})
+
+test('the boot screen gets its own orb while the harness loads', async () => {
+  await boot()
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.ok(
+    /data-dsh-boot/.test(src),
+    'the shell marks the boot splash with data-dsh-boot; the theme must target that, not a hashed class',
+  )
+  assert.ok(
+    /data-dsh-boot-spinner/.test(src),
+    'the default boot spinner must be replaced by the orb, not stacked under it',
   )
 })

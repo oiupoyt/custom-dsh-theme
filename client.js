@@ -34,7 +34,55 @@ window.__ModuleLoader__.load({
       },
     }
 
-    const DEFAULTS = { accent: 'sky', density: 'comfortable', motion: 'calm', prose: 'sans' }
+    /**
+     * Substrates. Pure black is a mood, not a default: at full-screen size it
+     * flattens every raised surface into one void. Each entry is the same ramp
+     * with a different floor, so panels keep a visible step above the page
+     * without turning grey. Light mode is untouched by this choice.
+     */
+    const SURFACES = {
+      amoled: {
+        base: '#000000',
+        l1: '#0a0a0a',
+        l2: '#0e0e0e',
+        l3: '#131313',
+        overlay: '#101010',
+        raised: '#141414',
+        hover: '#181818',
+        chip: '#1a1a1a',
+        border1: '#1f1f1f',
+        border3: '#2a2a2a',
+        border4: '#333333',
+      },
+      soft: {
+        base: '#0b0b0c',
+        l1: '#101012',
+        l2: '#141417',
+        l3: '#191a1d',
+        overlay: '#17181b',
+        raised: '#1c1d21',
+        hover: '#232429',
+        chip: '#26272b',
+        border1: '#2a2b31',
+        border3: '#3a3b42',
+        border4: '#4a4b53',
+      },
+      warm: {
+        base: '#0d0b0a',
+        l1: '#12100e',
+        l2: '#171412',
+        l3: '#1d1a17',
+        overlay: '#1b1815',
+        raised: '#211d19',
+        hover: '#2a2521',
+        chip: '#2b2723',
+        border1: '#302b26',
+        border3: '#403a34',
+        border4: '#514a43',
+      },
+    }
+
+    const DEFAULTS = { accent: 'sky', surface: 'soft', density: 'comfortable', motion: 'calm', prose: 'sans' }
 
     function readPrefs(store) {
       const prefs = { ...DEFAULTS }
@@ -43,6 +91,7 @@ window.__ModuleLoader__.load({
         if (!raw) return prefs
         const parsed = JSON.parse(raw)
         if (ACCENTS[parsed.accent]) prefs.accent = parsed.accent
+        if (SURFACES[parsed.surface]) prefs.surface = parsed.surface
         if (parsed.density === 'compact' || parsed.density === 'comfortable') prefs.density = parsed.density
         if (parsed.motion === 'full' || parsed.motion === 'calm') prefs.motion = parsed.motion
         if (parsed.prose === 'mono' || parsed.prose === 'sans') prefs.prose = parsed.prose
@@ -62,14 +111,48 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * The ramp is written once with amoled values; a substrate swap is a
+     * lookup on the exact colours, so every surface token (panels, menus,
+     * hairlines, code blocks) moves together without hand-editing 126 entries.
+     * Tinted semantic colours and alpha masks are left alone on purpose.
+     */
+    const RAMP_KEYS = {
+      '#000000': 'base',
+      '#0a0a0a': 'l1',
+      '#0e0e0e': 'l2',
+      '#101010': 'overlay',
+      '#111111': 'l2',
+      '#131313': 'l3',
+      '#141414': 'raised',
+      '#161616': 'raised',
+      '#181818': 'hover',
+      '#1a1a1a': 'chip',
+      '#222222': 'hover',
+      '#1f1f1f': 'border1',
+      '#2a2a2a': 'border3',
+      '#333333': 'border4',
+    }
+
+    function retint(tokens, surfaceId) {
+      if (surfaceId === 'amoled' || !SURFACES[surfaceId]) return tokens
+      const stops = SURFACES[surfaceId]
+      const out = {}
+      for (const [name, pair] of Object.entries(tokens)) {
+        const stop = RAMP_KEYS[pair.dark]
+        out[name] = stop ? { dark: stops[stop], light: pair.light } : pair
+      }
+      return out
+    }
+
     /** Both palette modes for every token this theme repaints. */
-    function buildTokens(accentId) {
+    function buildTokens(accentId, surfaceId) {
       const a = ACCENTS[accentId] || ACCENTS.sky
       const d = a.dark
       const l = a.light
       const pair = (dark, light) => ({ dark, light })
 
-      return {
+      const tokens = {
         '--dsw-alias-bg-base': pair('#000000', '#f4f4f2'),
         '--dsw-alias-bg-layer-1': pair('#0a0a0a', '#fafaf8'),
         '--dsw-alias-bg-layer-2': pair('#0e0e0e', '#ffffff'),
@@ -216,11 +299,151 @@ window.__ModuleLoader__.load({
         '--dsw-radius-xl': pair('0', '0'),
         '--dsw-radius-panel': pair('0', '0'),
       }
+      return retint(tokens, surfaceId)
     }
 
     /* Three attribute repeats: claude-style ships !important radii at high
        class specificity, so the square rule must outrank it without editing it. */
     const K = 'html:root body[data-kat-theme][data-kat-theme][data-kat-theme]'
+
+    /* ---- Thinking orb -----------------------------------------------------
+       A dotted sphere: points on a Fibonacci lattice, turned about a tilted
+       axis and shaded by depth. Two tuned presets rather than one scaled
+       design, because a 14px row indicator and a 56px boot orb want different
+       dot counts and different dot weights. Inspired by thinking-orbs (MIT,
+       Jakub Antalik); drawn here on a plain 2D canvas so the bundle keeps its
+       no-dependencies promise. */
+    const ORB_PRESETS = {
+      sm: { dots: 20, weight: 0.07, speed: 0.9, tilt: 0.62 },
+      lg: { dots: 46, weight: 0.026, speed: 0.55, tilt: 0.5 },
+    }
+    const ORB_SCALE = 0.84
+
+    function orbDots(t, size) {
+      const preset = size <= 24 ? ORB_PRESETS.sm : ORB_PRESETS.lg
+      const n = preset.dots
+      const c = size / 2
+      const radius = c * ORB_SCALE
+      const turn = t * preset.speed
+      const ca = Math.cos(turn)
+      const sa = Math.sin(turn)
+      const ct = Math.cos(preset.tilt)
+      const st = Math.sin(preset.tilt)
+      const dots = []
+      for (let i = 0; i < n; i++) {
+        const y = 1 - (2 * (i + 0.5)) / n
+        const ring = Math.sqrt(Math.max(0, 1 - y * y))
+        const phi = i * Math.PI * (3 - Math.sqrt(5))
+        const x0 = Math.cos(phi) * ring
+        const z0 = Math.sin(phi) * ring
+        const x1 = x0 * ca - z0 * sa
+        const z1 = x0 * sa + z0 * ca
+        const y1 = y * ct - z1 * st
+        const z2 = y * st + z1 * ct
+        const depth = (z2 + 1) / 2
+        dots.push({
+          x: c + x1 * radius,
+          y: c - y1 * radius,
+          r: Math.max(0.4, size * preset.weight * (0.55 + depth * 0.9)),
+          a: 0.16 + depth * 0.84,
+        })
+      }
+      return { size, dots }
+    }
+
+    function orbInk() {
+      try {
+        const value = getComputedStyle(document.body).getPropertyValue('--dsw-alias-label-primary')
+        if (value && value.trim()) return value.trim()
+      } catch {
+        /* computed style unavailable: fall through to a literal */
+      }
+      return '#f2f2f2'
+    }
+
+    /** Returns { element, dispose } or null when the platform cannot draw. */
+    function createOrb(size, label) {
+      try {
+        if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null
+        const canvas = document.createElement('canvas')
+        if (!canvas || typeof canvas.getContext !== 'function') return null
+        const ctx2d = canvas.getContext('2d')
+        if (!ctx2d) return null
+
+        // Retina sharpness without paying 3x on a low-dpi projector.
+        const dpr = Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, 2)
+        canvas.className = 'kat-orb'
+        canvas.setAttribute('data-kat-orb', '')
+        canvas.setAttribute('role', 'img')
+        canvas.setAttribute('aria-label', label || 'Working')
+        canvas.width = Math.round(size * dpr)
+        canvas.height = Math.round(size * dpr)
+        canvas.style.width = `${size}px`
+        canvas.style.height = `${size}px`
+        ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+        const draw = (t) => {
+          ctx2d.clearRect(0, 0, size, size)
+          ctx2d.fillStyle = orbInk()
+          for (const dot of orbDots(t, size).dots) {
+            ctx2d.globalAlpha = dot.a
+            ctx2d.beginPath()
+            ctx2d.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2)
+            ctx2d.fill()
+          }
+          ctx2d.globalAlpha = 1
+        }
+
+        const still =
+          typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+        if (still || typeof requestAnimationFrame !== 'function') {
+          draw(0.65)
+          return { element: canvas, dispose() {} }
+        }
+
+        let frame = 0
+        let startedAt = 0
+        let visible = true
+        const step = (now) => {
+          if (!visible) return
+          if (!startedAt) startedAt = now
+          draw((now - startedAt) / 1000)
+          frame = requestAnimationFrame(step)
+        }
+        frame = requestAnimationFrame(step)
+
+        // The sidebar keeps every session row mounted, so an orb that never
+        // stops animating off-screen costs battery for nothing.
+        let observer = null
+        if (typeof IntersectionObserver === 'function') {
+          observer = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting && !visible) {
+                visible = true
+                startedAt = 0
+                frame = requestAnimationFrame(step)
+              } else if (!entry.isIntersecting && visible) {
+                visible = false
+                cancelAnimationFrame(frame)
+              }
+            }
+          })
+          observer.observe(canvas)
+        }
+
+        return {
+          element: canvas,
+          dispose() {
+            visible = false
+            if (observer) observer.disconnect()
+            if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+            if (canvas.remove) canvas.remove()
+          },
+        }
+      } catch {
+        return null
+      }
+    }
 
     function stylesheet() {
       return `
@@ -314,6 +537,36 @@ ${K} svg[data-state="ongoing"]{
   border-radius:var(--kat-radius) !important;
 }
 
+/* The orb takes the spinner's exact spot: the host svg keeps its box and is
+   only hidden, so rows do not reflow when the canvas lands on top of it. */
+${K} .kat-orb{
+  position:absolute;z-index:1;display:block;pointer-events:none;
+}
+${K} .kat-orb-host{position:relative}
+${K} svg[data-kat-orb-hidden]{visibility:hidden !important}
+${K} [data-dsh-boot-orb]{position:static !important;margin:0 auto;display:block}
+${K} [data-dsh-boot-spinner][data-kat-orb-hidden]{display:none !important}
+
+/* Boot screen: the shell paints a rounded card with a spinning ring. Square
+   it off, drop the ring, and give it the same mono voice as the rest. */
+${K} [data-dsh-boot]{
+  background:var(--dsw-alias-bg-base,#0b0b0c) !important;
+  font-family:var(--kat-font-mono) !important;
+}
+${K} [data-dsh-boot] [class*="wordmark"]{
+  font-family:var(--kat-font-mono) !important;
+  font-size:11px !important;
+  font-weight:500 !important;
+  letter-spacing:.34em !important;
+  color:var(--dsw-alias-label-tertiary,#8a8a8a) !important;
+}
+${K} [data-dsh-boot] [class*="hint"]{
+  font-family:var(--kat-font-mono) !important;
+  font-size:11px !important;
+  letter-spacing:.02em;
+  color:var(--dsw-alias-label-dimmed,#6b6b6b) !important;
+}
+
 /* Effort picker, list form: the host vertical radio menu becomes a
    horizontal segmented bar. The sliding pill is injected by the enhancer in
    apply(); with no JavaScript the checked option still carries the accent
@@ -378,10 +631,174 @@ ${K} .dsh-claude-effort-tick{background:var(--dsw-alias-label-tertiary,#8a8a8a)}
     animation-iteration-count:infinite !important;
   }
 }
+
+/* The image-gen gallery chip duplicates the Image Studio surface and crowds
+   the session header; the plugin keeps its tools and its other entry points. */
+${K} button[title="Image Studio Gallery"]{
+  display:none !important;
+}
+
+/* ---- Top bar: one ruled band, title row above, view tabs below ----
+   The host header draws a 76px block with the title, chips and utility icons
+   on one line and the tabs floating below it. Fixed heights and one hairline
+   make it read as a single instrument strip: title row, then a tab rail on
+   the band's baseline, all left-aligned. */
+${K} header[data-window-drag]{
+  background:var(--dsw-alias-bg-base,#000) !important;
+  border-bottom:1px solid var(--dsw-alias-border-l1,#1f1f1f) !important;
+  min-height:0 !important;
+  padding:4px 14px 0 !important;
+  grid-template-columns:auto minmax(0,1fr);
+}
+${K} header[data-window-drag] [class*="titleRow"]{
+  min-height:32px !important;
+  align-items:center !important;
+  gap:12px !important;
+  padding:0 !important;
+}
+${K} header[data-window-drag] [class*="titleCluster"]{
+  flex:1 1 auto !important;
+  align-items:center !important;
+  gap:10px !important;
+  min-width:0 !important;
+  margin:0 !important;
+  padding:0 !important;
+}
+${K} header[data-window-drag] [class*="crumbs"]{
+  flex:0 1 auto !important;
+  gap:6px !important;
+  min-width:0 !important;
+  color:var(--dsw-alias-label-tertiary,#8a8a8a) !important;
+  font-family:var(--kat-font-mono) !important;
+  font-size:12px !important;
+  line-height:16px !important;
+  letter-spacing:.01em !important;
+}
+${K} header[data-window-drag] [class*="crumb"]{
+  max-width:min(52ch,42vw) !important;
+  font-size:12px !important;
+  line-height:16px !important;
+  letter-spacing:.01em !important;
+}
+${K} header[data-window-drag] [class*="crumbCurrent"]{
+  color:var(--dsw-alias-label-primary,#f2f2f2) !important;
+  font-weight:600 !important;
+}
+${K} header[data-window-drag] [class*="headerActions"],
+${K} header[data-window-drag] [class*="headerUtilities"]{
+  flex:none !important;
+  align-items:center !important;
+  gap:6px !important;
+  margin-left:0 !important;
+}
+${K} header[data-window-drag] [class*="headerUtilities"]{
+  margin-left:auto !important;
+}
+${K} header[data-window-drag] :is([class*="headerActions"],[class*="headerUtilities"]) button{
+  appearance:none;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  height:26px !important;
+  min-height:26px !important;
+  min-width:26px;
+  padding:0 8px !important;
+  border:0 !important;
+  background:transparent !important;
+  color:var(--dsw-alias-label-secondary,#a3a3a3) !important;
+  font-family:var(--kat-font-mono) !important;
+  font-size:11.5px !important;
+  line-height:1 !important;
+  letter-spacing:.01em;
+  transition:background-color .15s ease,color .15s ease;
+}
+${K} header[data-window-drag] :is([class*="headerActions"],[class*="headerUtilities"]) button:hover{
+  background:var(--dsw-alias-interactive-bg-hover,#161616) !important;
+  color:var(--dsw-alias-label-primary,#f2f2f2) !important;
+}
+${K} header[data-window-drag] [data-conversation-header-corner] button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:26px !important;
+  min-height:26px !important;
+  min-width:26px;
+  padding:0 !important;
+  border:0 !important;
+  background:transparent !important;
+  color:var(--dsw-alias-label-secondary,#a3a3a3) !important;
+  transition:background-color .15s ease,color .15s ease;
+}
+${K} header[data-window-drag] [data-conversation-header-corner] button:hover{
+  background:var(--dsw-alias-interactive-bg-hover,#161616) !important;
+  color:var(--dsw-alias-label-primary,#f2f2f2) !important;
+}
+${K} header[data-window-drag] [class*="_tabs"]{
+  width:100% !important;
+  min-height:32px !important;
+  align-items:stretch !important;
+  gap:0 !important;
+  margin:0 !important;
+  padding:0 !important;
+}
+${K} [data-conversation-tabs]{
+  flex:1 1 auto !important;
+  align-items:stretch !important;
+  gap:0 !important;
+  min-width:0 !important;
+  min-height:32px !important;
+}
+${K} [data-conversation-tabs] > button{
+  position:relative;
+  height:32px !important;
+  min-height:32px !important;
+  margin:0 !important;
+  padding:0 14px !important;
+  border:0 !important;
+  background:transparent !important;
+  color:var(--dsw-alias-label-tertiary,#8a8a8a) !important;
+  font-family:var(--kat-font-mono) !important;
+  font-size:12.5px !important;
+  font-weight:500 !important;
+  line-height:1 !important;
+  letter-spacing:.01em !important;
+  white-space:nowrap;
+  transition:color .15s ease,background-color .15s ease;
+}
+${K} [data-conversation-tabs] > button:hover{
+  background:var(--dsw-alias-interactive-bg-hover,#141414) !important;
+  color:var(--dsw-alias-label-primary,#f2f2f2) !important;
+}
+${K} [data-conversation-tabs] > button[aria-selected="true"]{
+  color:var(--dsw-alias-label-primary,#f2f2f2) !important;
+}
+${K} [data-conversation-tabs] > button:after{
+  left:0 !important;
+  right:0 !important;
+  bottom:0 !important;
+  height:2px !important;
+  border-radius:0 !important;
+  background:transparent !important;
+}
+${K} [data-conversation-tabs] > button[aria-selected="true"]:after{
+  background:var(--dsw-alias-brand-primary,#7dd3fc) !important;
+}
+${K} [data-conversation-tabs] > button:focus-visible{
+  outline:2px solid var(--dsw-alias-brand-primary,#7dd3fc) !important;
+  outline-offset:-2px;
+}
 `
     }
 
-    const SWITCHES = ['data-kat-theme', 'data-kat-motion', 'data-kat-density', 'data-kat-prose', 'data-kat-accent']
+    const SWITCHES = [
+      'data-kat-theme',
+      'data-kat-motion',
+      'data-kat-density',
+      'data-kat-prose',
+      'data-kat-accent',
+      'data-kat-surface',
+    ]
 
     const SETTINGS_CSS = `
 ${K} .kat-settings{display:flex;flex-direction:column;gap:18px;max-width:640px}
@@ -406,18 +823,20 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         body.setAttribute('data-kat-density', prefs.density)
         body.setAttribute('data-kat-prose', prefs.prose)
         body.setAttribute('data-kat-accent', prefs.accent)
+        body.setAttribute('data-kat-surface', prefs.surface)
       }
       paint()
 
       // buildTokens is pure per accent, and the re-assert path runs on every
       // host theme change; memoise so a scheme flip costs no rebuild.
       const tokenCache = new Map()
-      const tokensFor = (accent) => {
-        if (!tokenCache.has(accent)) tokenCache.set(accent, buildTokens(accent))
-        return tokenCache.get(accent)
+      const tokensFor = (accent, surface) => {
+        const key = `${accent}|${surface}`
+        if (!tokenCache.has(key)) tokenCache.set(key, buildTokens(accent, surface))
+        return tokenCache.get(key)
       }
 
-      let disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent))
+      let disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent, prefs.surface))
 
       // The host presenter owns the body's inline custom properties and
       // rewrites them wholesale from the snapshot it is handed. If our layer
@@ -426,13 +845,13 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       // assuming our first registration survives.
       const stackLayer = () => {
         disposeLayer()
-        disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent))
+        disposeLayer = ctx.theme.overrideTokens(SOURCE, tokensFor(prefs.accent, prefs.surface))
       }
       const snapshotKeepsLayer = (snapshot) => {
         const tokens = snapshot?.active?.tokens
         if (tokens === undefined) return false
         const scheme = snapshot.active.colorScheme === 'light' ? 'light' : 'dark'
-        for (const [name, pair] of Object.entries(tokensFor(prefs.accent))) {
+        for (const [name, pair] of Object.entries(tokensFor(prefs.accent, prefs.surface))) {
           if (tokens[name] !== pair[scheme]) return false
         }
         return true
@@ -547,6 +966,112 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         }
       })()
 
+      // Thinking orbs: the boot splash and every working-session row. The
+      // host keeps its own spinner node (it owns the layout), so the canvas is
+      // overlaid on that box rather than replacing it; teardown puts the host
+      // element back exactly as it was.
+      const stopOrbs = (() => {
+        try {
+          if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') {
+            return () => {}
+          }
+          if (!document.body) return () => {}
+
+          const live = []
+          const done = new WeakSet()
+
+          const mountBootOrb = () => {
+            const boot = document.querySelector('[data-dsh-boot]')
+            if (!boot) return
+            const spinner = boot.querySelector('[data-dsh-boot-spinner]')
+            if (!spinner || done.has(spinner) || spinner.parentElement === null) return
+            const orb = createOrb(56, 'Loading the harness')
+            if (!orb) return
+            done.add(spinner)
+            spinner.setAttribute('data-kat-orb-hidden', '')
+            orb.element.setAttribute('data-dsh-boot-orb', '')
+            spinner.parentElement.insertBefore(orb.element, spinner)
+            live.push({ orb, host: null, spinner })
+          }
+
+          const mountRowOrb = (svg) => {
+            if (done.has(svg)) return
+            const host = svg.parentElement
+            if (!host) return
+            const box = svg.getBoundingClientRect ? svg.getBoundingClientRect() : null
+            const width = Math.round((box && box.width) || 0) || 10
+            const height = Math.round((box && box.height) || 0) || 10
+            const size = Math.max(16, width)
+            const orb = createOrb(size, 'Working')
+            if (!orb) return
+            done.add(svg)
+            svg.setAttribute('data-kat-orb-hidden', '')
+            if (host.classList) host.classList.add('kat-orb-host')
+            const hostBox = host.getBoundingClientRect ? host.getBoundingClientRect() : null
+            if (box && hostBox) {
+              orb.element.style.left = `${box.left - hostBox.left - (size - width) / 2}px`
+              orb.element.style.top = `${box.top - hostBox.top - (size - height) / 2}px`
+            } else {
+              orb.element.style.left = '0px'
+              orb.element.style.top = '0px'
+            }
+            host.appendChild(orb.element)
+            live.push({ orb, host, spinner: svg })
+          }
+
+          // A finished session drops its spinner while the row stays mounted:
+          // an orb left behind would keep spinning on an idle session forever.
+          const prune = () => {
+            for (let i = live.length - 1; i >= 0; i--) {
+              const entry = live[i]
+              if (entry.spinner && entry.spinner.isConnected !== false) continue
+              try {
+                entry.orb.dispose()
+                if (entry.host && entry.host.classList) entry.host.classList.remove('kat-orb-host')
+              } catch {
+                /* already gone */
+              }
+              live.splice(i, 1)
+            }
+          }
+
+          const scan = () => {
+            try {
+              prune()
+              mountBootOrb()
+              for (const svg of document.querySelectorAll('svg[data-state="ongoing"]')) {
+                mountRowOrb(svg)
+              }
+            } catch {
+              /* one bad node must not stop the rest */
+            }
+          }
+          scan()
+
+          let observer = null
+          if (typeof MutationObserver === 'function') {
+            observer = new MutationObserver(scan)
+            observer.observe(document.body, { childList: true, subtree: true })
+          }
+
+          return () => {
+            if (observer) observer.disconnect()
+            for (const entry of live) {
+              try {
+                entry.orb.dispose()
+                if (entry.spinner) entry.spinner.removeAttribute('data-kat-orb-hidden')
+                if (entry.host && entry.host.classList) entry.host.classList.remove('kat-orb-host')
+              } catch {
+                /* already gone */
+              }
+            }
+            live.length = 0
+          }
+        } catch {
+          return () => {}
+        }
+      })()
+
       // Always restack, even for the accent already in force: this is the one
       // public path a caller can use to heal a dropped layer by hand.
       const setAccent = (next) => {
@@ -559,10 +1084,14 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         paint()
       }
 
+      // Accent and substrate change the token layer itself; the rest are body
+      // switches. Restacking on every setPref would churn the presenter.
+      const PALETTE_KEYS = new Set(['accent', 'surface'])
       const setPref = (key, value) => {
         if (prefs[key] === value) return
         prefs[key] = value
         paint()
+        if (PALETTE_KEYS.has(key)) stackLayer()
         writePrefs(store, prefs)
       }
 
@@ -581,6 +1110,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         () => () => {
           offTheme()
           stopEffortBars()
+          stopOrbs()
           disposeLayer()
           disposeSheet()
           for (const name of SWITCHES) body.removeAttribute(name)
@@ -588,7 +1118,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         'custom-dsh-theme: palette, sheet and body switches',
       )
 
-      globalThis.__KAT_THEME__ = { SOURCE, prefs, setAccent, setPref, reset }
+      globalThis.__KAT_THEME__ = { SOURCE, prefs, setAccent, setPref, reset, orbDots }
 
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
@@ -633,6 +1163,12 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
                 'Personal square-minimal theme. Changes apply immediately.',
               ),
               group('Accent', [['sky', 'Sky'], ['emerald', 'Emerald'], ['mono', 'Mono']], prefs.accent, setAccent),
+              group(
+                'Black',
+                [['amoled', 'Amoled'], ['soft', 'Soft'], ['warm', 'Warm']],
+                prefs.surface,
+                (v) => setPref('surface', v),
+              ),
               group('Density', [['comfortable', 'Comfortable'], ['compact', 'Compact']], prefs.density, (v) => setPref('density', v)),
               group('Motion', [['calm', 'Calm'], ['full', 'Full']], prefs.motion, (v) => setPref('motion', v)),
               group('Prose', [['sans', 'Sans'], ['mono', 'Mono']], prefs.prose, (v) => setPref('prose', v)),
