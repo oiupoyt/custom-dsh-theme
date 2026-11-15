@@ -682,12 +682,7 @@ window.__ModuleLoader__.load({
             : Date.now()
         const POKE_MS = 1400
 
-        let frames = 0
         const draw = (t) => {
-          frames += 1
-          if (frames % 10 === 1 && canvas.setAttribute) {
-            canvas.setAttribute('data-kat-orb-frames', String(frames))
-          }
           // The poke shoves the particles outward and lets them spring back.
           const ageMs = pokeAt >= 0 ? clock() - pokeAt : -1
           const kick =
@@ -748,12 +743,18 @@ window.__ModuleLoader__.load({
         let frame = 0
         let startedAt = 0
         let lastTime = 0
+        let lastDrawAt = 0
         let visible = true
         const step = (now) => {
           if (!visible) return
           if (!startedAt) startedAt = now
           lastTime = (now - startedAt) / 1000
-          draw(lastTime)
+          // Decorative canvas: 30fps still reads as a smooth breath and halves
+          // the per-frame draw work on integrated graphics.
+          if (now - lastDrawAt >= 30) {
+            lastDrawAt = now
+            draw(lastTime)
+          }
           frame = requestAnimationFrame(step)
         }
         frame = requestAnimationFrame(step)
@@ -830,6 +831,11 @@ body[data-kat-theme]{
 ${K}{
   --dsh-claude-font-prose:var(--kat-font-prose);
   --dsh-claude-font-serif:var(--kat-font-prose);
+  /* claude-style measures the settings-trigger row and writes its width to
+     the body. Collapsing the rail shrinks that measurement (260px -> 35px),
+     and changing a body custom property restyles the whole document. The
+     value only sizes the account popover, so pin it and skip that recalc. */
+  --dsh-claude-account-width:260px !important;
 }
 ${K}[data-kat-prose="mono"]{
   --kat-font-prose:var(--kat-font-mono);
@@ -837,6 +843,15 @@ ${K}[data-kat-prose="mono"]{
   --dsh-claude-font-serif:var(--kat-font-mono);
 }
 body[data-kat-density="compact"]{--kat-prose-gap:12px;--kat-row-pad:6px}
+
+/* The layout frame animates grid-template-columns while the sidebar opens
+   and closes. Every intermediate track size relayouts the whole transcript,
+   so one toggle costs ~1.4s of style recalc across five passes. Snap the
+   tracks instead: the rail is 56px wide, and the motion read as a slideshow
+   rather than polish. */
+${K} [data-dsh-claude-part~="layout-frame"]{
+  transition:none !important;
+}
 
 ${K} *,
 ${K} *::before,
@@ -1486,29 +1501,60 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           }
 
           let composerOrb = null
+          let composerAnchorEl = null
+          let composerCard = null
 
           // The mascot is unmounted for stretches of a turn, and the orb must
           // not leave with it: anchor to the block the mascot sits in, which
           // outlives it, and fall back to the composer's positioned ancestor.
+          // Resolving this walks the document and calls getComputedStyle, which
+          // forces a style flush. The transcript mutates on every token, so the
+          // result is cached until the host actually remounts the composer.
           const composerAnchor = () => {
+            if (composerAnchorEl && composerAnchorEl.isConnected) return composerAnchorEl
             let el = document.querySelector('[class*="composerStack"]')
             while (el && el !== document.body && getComputedStyle(el).position === 'static') {
               el = el.parentElement
             }
-            return el && el !== document.body ? el : null
+            composerAnchorEl = el && el !== document.body ? el : null
+            return composerAnchorEl
+          }
+
+          const currentCard = () => {
+            if (composerCard && composerCard.isConnected) return composerCard
+            composerCard = document.querySelector('[data-composer-card]')
+            return composerCard
           }
 
           // The mascot sat at the composer card's top-right. Anchoring to the
           // sticky seat and offsetting from the card keeps that spot stable
           // while the card resizes with the prompt, without the card clipping it.
+          // The canvas size is already in its inline style, so placement never
+          // measures the orb; and it only writes when the spot actually moved.
           const placeComposerOrb = (element) => {
             const anchor = element.parentElement
-            const card = document.querySelector('[data-composer-card]')
+            const card = currentCard()
             if (!anchor || !card) return
             const a = anchor.getBoundingClientRect()
             const c = card.getBoundingClientRect()
-            element.style.left = `${Math.round(c.right - a.left - element.offsetWidth - 8)}px`
-            element.style.top = `${Math.round(c.top - a.top - element.offsetHeight + 4)}px`
+            const width = parseFloat(element.style.width) || element.offsetWidth || 0
+            const height = parseFloat(element.style.height) || element.offsetHeight || 0
+            const left = `${Math.round(c.right - a.left - width - 8)}px`
+            const top = `${Math.round(c.top - a.top - height + 4)}px`
+            if (element.style.left !== left) element.style.left = left
+            if (element.style.top !== top) element.style.top = top
+          }
+
+          let cardObserver = null
+          const watchCard = () => {
+            if (typeof ResizeObserver !== 'function') return
+            const card = currentCard()
+            if (!card) return
+            if (cardObserver) cardObserver.disconnect()
+            cardObserver = new ResizeObserver(() => {
+              if (composerOrb && composerOrb.element.isConnected) placeComposerOrb(composerOrb.element)
+            })
+            cardObserver.observe(card)
           }
 
           const mountComposerOrb = () => {
@@ -1519,7 +1565,16 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               if (composerOrb.element.parentElement !== anchor) anchor.appendChild(composerOrb.element)
               placeComposerOrb(composerOrb.element)
               composerOrb.setState(activityState())
+              watchCard()
               return
+            }
+            if (composerOrb) {
+              try {
+                composerOrb.dispose()
+              } catch {
+                /* already gone */
+              }
+              composerOrb = null
             }
             const smooth = deepy && deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
             const orb = createOrb(smooth && smooth.width ? Math.round(smooth.width * 0.86) : 89, 'Thinking orb', {
@@ -1538,6 +1593,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               orb.poke()
             })
             composerOrb = orb
+            watchCard()
           }
 
           const STATUS_ORBS = {
@@ -1575,7 +1631,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             live.push({ orb, host, spinner: dot })
           }
 
-          const scan = () => {
+          const scanAll = () => {
             try {
               prune()
               mountBootOrb()
@@ -1590,11 +1646,75 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               /* one bad node must not stop the rest */
             }
           }
-          scan()
+          scanAll()
+
+          // Chat streams mutate the DOM on every token. Re-scanning the whole
+          // document for each batch is what made the UI lag; inspect only the
+          // added/removed subtrees and the attributes this feature reacts to.
+          const scanAdded = (node, flags) => {
+            if (!node || node.nodeType !== 1) return
+            if (
+              node.matches?.('[data-composer-card]') ||
+              node.matches?.('.dsh-claude-deepy') ||
+              node.querySelector?.('[data-composer-card],.dsh-claude-deepy')
+            ) {
+              flags.composer = true
+            }
+            if (
+              node.matches?.('[data-tool],[data-state="running"],[aria-busy="true"]') ||
+              node.querySelector?.('[data-tool],[data-state="running"],[aria-busy="true"]')
+            ) {
+              flags.state = true
+            }
+            if (node.matches?.('svg[data-state="ongoing"]')) mountRowOrb(node)
+            for (const svg of node.querySelectorAll?.('svg[data-state="ongoing"]') || []) mountRowOrb(svg)
+            if (node.matches?.('[data-state="done"],[data-state="warning"]')) mountStatusOrb(node)
+            for (const dot of node.querySelectorAll?.('[data-state="done"],[data-state="warning"]') || []) {
+              mountStatusOrb(dot)
+            }
+          }
+
+          const onMutations = (records) => {
+            const flags = { composer: !composerOrb || !composerOrb.element.isConnected, state: false }
+            for (const record of records) {
+              if (record.type === 'attributes') {
+                const target = record.target
+                if (record.attributeName === 'data-state') {
+                  if (target.matches?.('[data-state="done"],[data-state="warning"]')) mountStatusOrb(target)
+                  else if (target.matches?.('svg[data-state="ongoing"]')) mountRowOrb(target)
+                  flags.state = true
+                } else if (record.attributeName === 'data-animation') {
+                  flags.state = true
+                }
+                continue
+              }
+              for (const node of record.addedNodes) scanAdded(node, flags)
+              for (const node of record.removedNodes) {
+                if (!node || node.nodeType !== 1) continue
+                if (composerAnchorEl && (node === composerAnchorEl || node.contains?.(composerAnchorEl))) {
+                  composerAnchorEl = null
+                  flags.composer = true
+                }
+                if (composerCard && (node === composerCard || node.contains?.(composerCard))) {
+                  composerCard = null
+                }
+                if (composerOrb && (node === composerOrb.element || node.contains?.(composerOrb.element))) {
+                  flags.composer = true
+                }
+              }
+            }
+            try {
+              prune()
+              if (flags.composer) mountComposerOrb()
+              else if (composerOrb && flags.state) composerOrb.setState(activityState())
+            } catch {
+              /* one bad node must not stop the rest */
+            }
+          }
 
           let observer = null
           if (typeof MutationObserver === 'function') {
-            observer = new MutationObserver(scan)
+            observer = new MutationObserver(onMutations)
             observer.observe(document.body, {
               childList: true,
               subtree: true,
@@ -1610,6 +1730,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
 
           return () => {
             if (observer) observer.disconnect()
+            if (cardObserver) cardObserver.disconnect()
             if (typeof removeEventListener === 'function') removeEventListener('resize', onResize)
             if (composerOrb) {
               try {
