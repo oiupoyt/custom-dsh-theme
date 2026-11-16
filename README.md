@@ -40,11 +40,11 @@ Black, square, mono, quiet.
   claude-style's mascot node, which unmounts for stretches of a turn. The orb
   stays visible while the mascot is gone, and returns to its state signal when
   the mascot remounts.
-- **It follows the agent.** claude-style marks the mascot with
-  `data-animation`, and the orb reads it: `building` shows the three-ring
-  working state, `typing` a rolling waveform, `thinking`/`loading` a scan
-  meridian, anything else the resting sphere. Hovering the orb names the
-  current state, and clicking it throws a ring of sparks.
+- **It follows the agent.** The orb reads the host transcript, not a theme
+  mascot: no live turn (`[data-chat-running]` absent) is the resting sphere; a
+  running tool names the work (search, fetch, shell, file); an answer being
+  written is the waveform; anything else in a live turn is reasoning. Hovering
+  names the state, clicking throws a ring of sparks.
 - **List spacing.** A session row reserves a status-light column only when it
   has a status light. Idle rows collapse that column instead of showing a hole,
   so the list reads ragged-left where it used to read as broken.
@@ -53,6 +53,17 @@ Black, square, mono, quiet.
   under the band, mono labels, and a single accent underline on the active tab.
 - **Header.** The image-gen "Gallery" chip is hidden. The plugin stays mounted
   and keeps its tools and its Image Studio entry point.
+
+- **Forked from claude-style.** Runs without `dsh-claude-style`: an effort
+  slider laid over the host effort menu (drag, click a tick, or arrow keys;
+  every pick clicks the host radio), a check mark on the access preset in force,
+  retract / edit / rerun / delete message actions (each forks the session before
+  the message), and mono styling for the context ring, turn rail, process rows,
+  file-op rows, a standing sidebar search field, the footer and the caret. One
+  batched observer drives all of it.
+- **Phone.** On the dsh-mobile page (or any touch-only browser) the body gets
+  `data-kat-mobile`: the orb draws at ~12fps, row sweeps, reveals and blur stop,
+  and tap targets grow to 40px.
 
 Both light and dark are supported. Dark is the intended look.
 

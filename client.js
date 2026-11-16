@@ -751,7 +751,7 @@ window.__ModuleLoader__.load({
           lastTime = (now - startedAt) / 1000
           // Decorative canvas: 30fps still reads as a smooth breath and halves
           // the per-frame draw work on integrated graphics.
-          if (now - lastDrawAt >= 30) {
+          if (now - lastDrawAt >= orbFrameMs) {
             lastDrawAt = now
             draw(lastTime)
           }
@@ -814,6 +814,594 @@ window.__ModuleLoader__.load({
         return null
       }
     }
+
+    /**
+     * The phone page: dsh-mobile's dedicated frontend says so outright; any
+     * other touch-only browser (coarse pointer, no hover) is treated the same.
+     */
+    function isMobilePage(view, matches) {
+      if (view && view.__DSH_MOBILE_FRONTEND__ === 'dedicated') return true
+      return matches('(pointer: coarse)') && !matches('(hover: hover)')
+    }
+    // Desktop draws the orb at ~33fps; a phone at ~12fps, which still reads as
+    // motion and costs a third of the canvas work on a weak GPU.
+    const ORB_FRAME_MS = 30
+    const MOBILE_ORB_FRAME_MS = 80
+    let orbFrameMs = ORB_FRAME_MS
+
+    // The transcript tags every tool call with data-tool. While one is in
+    // flight, that name is the most specific thing the orb can say.
+    const TOOL_STATES = [
+      [/search/, 'scan'],
+      [/fetch|http|web/, 'fetch'],
+      [/bash|shell|exec|terminal|command/, 'working'],
+      [/read|write|edit|grep|glob|list|file|patch/, 'reading'],
+      [/image|generate|video/, 'reasoning'],
+    ]
+    function toolState(name) {
+      for (const [pattern, state] of TOOL_STATES) if (pattern.test(name)) return state
+      return 'working'
+    }
+
+    /**
+     * What the model in the open session is doing, read from the host
+     * transcript alone. The chat column carries [data-chat-running] only while
+     * a turn is live; without it the orb rests, whatever else is on the page.
+     * Inside a live turn: a running tool names the work; an answer being
+     * written is the wave. Anything else is the model thinking: the host does
+     * not render a reasoning block until it closes, so the gap after a finished
+     * tool call is the reasoning state, not generic work.
+     */
+    function readActivity(root) {
+      if (!root.querySelector('[data-chat-running]')) return 'waiting'
+      const tool = root.querySelector('[data-tool][data-state="running"],[data-tool][data-state="pending"]')
+      if (tool) return toolState((tool.getAttribute('data-tool') || '').toLowerCase())
+      const flow = root.querySelectorAll('[data-chat-flow-kind]')
+      const last = flow.length ? flow[flow.length - 1] : null
+      if (
+        last &&
+        last.getAttribute('data-chat-flow-kind') === 'assistant-step' &&
+        last.getAttribute('data-chat-group-part') === 'response'
+      ) {
+        return 'wave'
+      }
+      return 'reasoning'
+    }
+
+    /* ---- Effort slider -------------------------------------------------
+     * Forked from claude-style's effort slider, without its model picker. The
+     * host opens effort as a submenu of menuitemradio rows; the slider is laid
+     * over that same menu and every pick clicks the host radio, so the host
+     * keeps owning the value and the plain list still works with JS off.
+     */
+    const EFFORT_LABEL = /^(default|off|minimal|low|medium|high|xhigh|max)$/i
+    const effort = {
+      isEffortList(labels) {
+        return labels.length > 0 && labels.length <= 12 && labels.every((l) => EFFORT_LABEL.test(String(l).trim()))
+      },
+      fractionOf(index, count) {
+        return count > 1 ? index / (count - 1) : 0
+      },
+      indexAt(fraction, count) {
+        if (count <= 1) return 0
+        const f = Math.min(1, Math.max(0, fraction))
+        return Math.round(f * (count - 1))
+      },
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag)
+      if (className) node.className = className
+      if (text !== undefined) node.textContent = text
+      return node
+    }
+
+    function buildEffortSlider(menu, radios) {
+      const labels = radios.map((r) => (r.textContent || '').trim())
+      const root = el('div', 'kat-effort')
+      root.setAttribute('data-kat-effort', '')
+      const head = el('div', 'kat-effort-head')
+      const title = el('span', 'kat-effort-title', 'Effort')
+      const value = el('span', 'kat-effort-value')
+      head.append(title, value)
+      const track = el('div', 'kat-effort-track')
+      track.setAttribute('role', 'slider')
+      track.setAttribute('tabindex', '0')
+      track.setAttribute('aria-label', 'Reasoning effort')
+      track.setAttribute('aria-valuemin', '0')
+      track.setAttribute('aria-valuemax', String(labels.length - 1))
+      const fill = el('div', 'kat-effort-fill')
+      const knob = el('div', 'kat-effort-knob')
+      const ticks = el('div', 'kat-effort-ticks')
+      for (let i = 0; i < labels.length; i++) {
+        const tick = el('span', 'kat-effort-tick')
+        tick.style.left = `${effort.fractionOf(i, labels.length) * 100}%`
+        ticks.appendChild(tick)
+      }
+      track.append(fill, ticks, knob)
+      const ends = el('div', 'kat-effort-ends')
+      ends.append(el('span', '', 'Faster'), el('span', '', 'Smarter'))
+      root.append(head, track, ends)
+
+      let index = Math.max(0, radios.findIndex((r) => r.getAttribute('aria-checked') === 'true'))
+      // Position is a percentage of the track, so nothing is measured while
+      // idle and a resize needs no relayout pass of ours.
+      const show = (i) => {
+        const pct = `${effort.fractionOf(i, labels.length) * 100}%`
+        knob.style.left = pct
+        fill.style.width = pct
+        value.textContent = labels[i] || ''
+        track.setAttribute('aria-valuenow', String(i))
+        track.setAttribute('aria-valuetext', labels[i] || '')
+      }
+      show(index)
+
+      // A pick clicks the host's own menuitemradio: the host updates the session,
+      // closes the menu and re-renders, exactly as a click on the list would.
+      const pick = (i) => {
+        if (i === index) return
+        index = i
+        show(i)
+        const radio = radios[i]
+        if (radio && radio.isConnected) radio.click()
+      }
+
+      let dragging = false
+      const fractionFrom = (event) => {
+        const box = track.getBoundingClientRect()
+        return box.width ? (event.clientX - box.left) / box.width : 0
+      }
+      track.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        dragging = true
+        root.setAttribute('data-dragging', '')
+        track.setPointerCapture(event.pointerId)
+        show(effort.indexAt(fractionFrom(event), labels.length))
+      })
+      track.addEventListener('pointermove', (event) => {
+        if (dragging) show(effort.indexAt(fractionFrom(event), labels.length))
+      })
+      const finish = (event) => {
+        if (!dragging) return
+        dragging = false
+        root.removeAttribute('data-dragging')
+        pick(effort.indexAt(fractionFrom(event), labels.length))
+      }
+      track.addEventListener('pointerup', finish)
+      track.addEventListener('pointercancel', () => {
+        dragging = false
+        root.removeAttribute('data-dragging')
+        show(index)
+      })
+      track.addEventListener('keydown', (event) => {
+        const last = labels.length - 1
+        const next =
+          event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? Math.max(0, index - 1)
+            : event.key === 'ArrowRight' || event.key === 'ArrowUp' ? Math.min(last, index + 1)
+              : event.key === 'Home' ? 0
+                : event.key === 'End' ? last
+                  : -1
+        if (next < 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        pick(next)
+      })
+      // Menus close on outside pointerdown; the slider is inside the menu but
+      // its events must not reach the host's item-activation handlers.
+      root.addEventListener('click', (event) => event.stopPropagation())
+
+      menu.setAttribute('data-kat-effort-menu', '')
+      menu.insertBefore(root, menu.firstChild)
+      return root
+    }
+
+    /** Effort menus are small: every radio an effort label, at most 12. */
+    function enhanceEffortMenus(scope) {
+      for (const menu of scope.querySelectorAll('[role="menu"]')) {
+        const radios = [...menu.querySelectorAll('[role="menuitemradio"]')]
+        const isEffort = effort.isEffortList(radios.map((r) => r.textContent || ''))
+        const slider = menu.querySelector(':scope > [data-kat-effort]')
+        // A reused menu node may now hold the model list: take the slider off.
+        if (!isEffort) {
+          if (slider) slider.remove()
+          menu.removeAttribute('data-kat-effort-menu')
+          continue
+        }
+        // Rows re-rendered under a standing slider: rebuild against the new nodes.
+        if (slider && slider.__katRadios && slider.__katRadios.every((r) => r.isConnected)) continue
+        if (slider) slider.remove()
+        buildEffortSlider(menu, radios).__katRadios = radios
+      }
+    }
+
+    /* ---- Message actions ------------------------------------------------
+     * Forked from claude-style: retract / edit on your own message, rerun /
+     * delete under an answer. Each forks the session just before the message
+     * through the host sessions service and puts text back in the composer;
+     * the original session is never rewritten.
+     */
+    const ACTION_ICONS = {
+      retract: 'M4.5 6.5H10a4 4 0 0 1 0 8H7M4.5 6.5 7 4M4.5 6.5 7 9',
+      edit: 'M10.8 2.7 13.3 5.2 5.8 12.7 2.9 13.4 3.6 10.5ZM9.6 3.9 12.1 6.4',
+      rerun: 'M13.5 5.5V2.8m0 2.7h-2.7M13.2 5.2a5.5 5.5 0 1 0 1 5.2',
+      delete: 'M4 4l8 8M12 4l-8 8',
+    }
+    const ACTION_LABELS = {
+      retract: 'Retract this message',
+      edit: 'Edit this message',
+      rerun: 'Run this turn again',
+      delete: 'Delete this turn',
+    }
+
+    function actionButton(kind) {
+      const button = el('button', 'kat-action')
+      button.type = 'button'
+      button.setAttribute('data-kat-action', kind)
+      button.setAttribute('aria-label', ACTION_LABELS[kind])
+      button.title = ACTION_LABELS[kind]
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('width', '15')
+      svg.setAttribute('height', '15')
+      svg.setAttribute('aria-hidden', 'true')
+      const path = document.createElementNS(ns, 'path')
+      path.setAttribute('d', ACTION_ICONS[kind])
+      path.setAttribute('fill', 'none')
+      path.setAttribute('stroke', 'currentColor')
+      path.setAttribute('stroke-width', '1.5')
+      path.setAttribute('stroke-linecap', 'round')
+      path.setAttribute('stroke-linejoin', 'round')
+      svg.appendChild(path)
+      button.appendChild(svg)
+      return button
+    }
+
+    function createMessageActions(ctx) {
+      const get = (name) => {
+        try {
+          return ctx.get ? ctx.get(name) : undefined
+        } catch {
+          return undefined
+        }
+      }
+      const sessionKey = () => get('uiSession')?.current?.value?.key ?? null
+
+      // The user row carries the message seq on its chat node; reading it from
+      // the chat target snapshot is the only way to fork at the right event.
+      const messageOf = (userRow) => {
+        const id = sessionKey()
+        if (id === null) return null
+        const target = get('uiConversation')?.binding?.(id)?.target?.('chat')
+        const snapshot = target?.getSnapshot?.()
+        const key = userRow.getAttribute('data-chat-node-key')
+        if (!snapshot || key === null) return null
+        let node = null
+        for (const candidate of snapshot.nodes?.values?.() ?? []) {
+          if (candidate.key === key) {
+            node = candidate
+            break
+          }
+        }
+        const seq = node?.data?.seq
+        if (!Number.isSafeInteger(seq)) return null
+        const content = Array.isArray(node.data.content) ? node.data.content : []
+        const text = content.filter((p) => p && p.type === 'text').map((p) => p.text).join('')
+        const turn = Number(userRow.getAttribute('data-chat-turn'))
+        const live = snapshot.timeline?.turns?.get?.(turn)
+        return { sessionId: id, seq, text, attachments: content.some((p) => p && p.type !== 'text'), open: !!live && live.end === undefined }
+      }
+
+      const userRowForTurn = (row) => {
+        const turn = row.getAttribute('data-chat-turn')
+        return turn === null
+          ? null
+          : document.querySelector(`[data-chat-flow-kind="user"][data-chat-turn="${CSS.escape(turn)}"]`)
+      }
+
+      let busy = false
+      const forkAt = async (message, draft, submit) => {
+        const sessions = get('sessions')
+        const workspace = get('uiWorkspace')
+        if (typeof sessions?.fork !== 'function' || typeof workspace?.openSession !== 'function') {
+          throw new Error('custom-dsh-theme: the host offers no session fork')
+        }
+        const forked = await sessions.fork({ sessionId: message.sessionId, atSeq: message.seq - 1, increaseTitle: true })
+        workspace.openSession(forked)
+        // The forked session binds its composer a moment after it opens.
+        const deadline = Date.now() + 4000
+        for (;;) {
+          const binding = sessions.binding?.(forked)
+          const input = binding ? get('conversation')?.input?.for?.(binding.ctx) : null
+          if (input) {
+            input.setDraft(draft)
+            if (submit) input.actions?.submit?.()
+            else input.focus?.()
+            return
+          }
+          if (Date.now() > deadline) throw new Error('custom-dsh-theme: the forked session never bound its composer')
+          await new Promise((r) => setTimeout(r, 60))
+        }
+      }
+      const run = (job) => {
+        if (busy) return
+        busy = true
+        Promise.resolve()
+          .then(job)
+          .catch((error) => console.error('[custom-dsh-theme] message action failed:', error))
+          .finally(() => {
+            busy = false
+          })
+      }
+
+      const handlers = {
+        retract: (msg) => forkAt(msg, msg.text, false),
+        edit: (msg, userRow) => openEditor(msg, userRow),
+        rerun: (msg) => forkAt(msg, msg.text, true),
+        delete: (msg) => forkAt(msg, '', false),
+      }
+
+      // Inline editor under the message: Enter sends into a fork, Escape or
+      // Cancel closes it. Never a blocking dialog, which phones render badly.
+      let editor = null
+      const closeEditor = () => {
+        if (editor) editor.remove()
+        editor = null
+      }
+      const openEditor = (msg, userRow) => {
+        closeEditor()
+        const box = el('div', 'kat-editor')
+        const input = el('textarea', 'kat-editor-input')
+        input.value = msg.text
+        input.rows = Math.min(10, Math.max(2, msg.text.split('\n').length))
+        input.setAttribute('aria-label', ACTION_LABELS.edit)
+        const row = el('div', 'kat-editor-row')
+        const cancel = el('button', 'kat-editor-cancel', 'Cancel')
+        cancel.type = 'button'
+        const save = el('button', 'kat-editor-save', 'Save and send')
+        save.type = 'button'
+        row.append(cancel, save)
+        box.append(input, row)
+        const send = () => {
+          const text = input.value
+          if (text.trim() === '') return
+          closeEditor()
+          run(() => forkAt(msg, text, true))
+        }
+        input.addEventListener('input', () => {
+          save.disabled = input.value.trim() === ''
+        })
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            closeEditor()
+          } else if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            send()
+          }
+        })
+        cancel.addEventListener('click', (event) => {
+          event.stopPropagation()
+          closeEditor()
+        })
+        save.addEventListener('click', (event) => {
+          event.stopPropagation()
+          send()
+        })
+        userRow.appendChild(box)
+        editor = box
+        input.focus()
+        input.setSelectionRange(input.value.length, input.value.length)
+        return undefined
+      }
+
+      const onClick = (event) => {
+        const button = event.target.closest?.('[data-kat-action]')
+        if (!button) return
+        event.stopPropagation()
+        const row = button.closest('[data-chat-flow-kind]')
+        const userRow = row && row.getAttribute('data-chat-flow-kind') === 'user' ? row : row && userRowForTurn(row)
+        const message = userRow ? messageOf(userRow) : null
+        if (!message || message.seq <= 0 || message.open) return
+        const kind = button.getAttribute('data-kat-action')
+        if (kind === 'edit') handlers.edit(message, userRow)
+        else run(() => handlers[kind](message))
+      }
+      document.addEventListener('click', onClick, true)
+
+      // Action rows mount and unmount with paging; each gets its buttons once.
+      const decorate = (scope) => {
+        for (const bar of scope.querySelectorAll('[data-chat-flow-kind="user"] [class*="_actions"]:not([data-kat-actions])')) {
+          bar.setAttribute('data-kat-actions', '')
+          bar.append(actionButton('retract'), actionButton('edit'))
+        }
+        for (const bar of scope.querySelectorAll('[data-turn-tail] [class*="_actions"]:not([data-kat-actions])')) {
+          bar.setAttribute('data-kat-actions', '')
+          bar.append(actionButton('rerun'), actionButton('delete'))
+        }
+      }
+      return {
+        decorate,
+        dispose() {
+          document.removeEventListener('click', onClick, true)
+          closeEditor()
+          for (const node of document.querySelectorAll('[data-kat-action]')) node.remove()
+          for (const node of document.querySelectorAll('[data-kat-actions]')) node.removeAttribute('data-kat-actions')
+        },
+      }
+    }
+
+    /* ---- Permission menu: mark the active preset ------------------------ */
+    function markPermissionMenus(scope) {
+      const trigger = document.querySelector('button[aria-label^="Access mode, current:"]')
+      if (!trigger) return
+      const current = trigger.getAttribute('aria-label').replace(/^Access mode, current:\s*/, '').trim().toLowerCase()
+      for (const menu of scope.querySelectorAll('[role="menu"]')) {
+        const items = [...menu.querySelectorAll('[role="menuitem"]')]
+        const names = items.map((i) => (i.textContent || '').trim().toLowerCase())
+        if (!names.includes('read only') || !names.some((n) => n === 'full access')) continue
+        menu.setAttribute('data-kat-perm', '')
+        items.forEach((item, i) => item.toggleAttribute('data-kat-current', names[i] === current))
+      }
+    }
+
+    /**
+     * One observer for every forked feature. Mutations only queue work; the
+     * work runs once per batch on a short timer (frames stop in a hidden tab,
+     * and menus must still be enhanced the moment they open).
+     */
+    function installFeatures(ctx) {
+      if (typeof document === 'undefined' || !document.body || typeof MutationObserver !== 'function') {
+        return () => {}
+      }
+      const actions = createMessageActions(ctx)
+      const pass = () => {
+        try {
+          enhanceEffortMenus(document)
+          markPermissionMenus(document)
+          actions.decorate(document)
+        } catch (error) {
+          console.error('[custom-dsh-theme] feature pass failed:', error)
+        }
+      }
+      let timer = 0
+      const schedule = () => {
+        if (timer) return
+        timer = setTimeout(() => {
+          timer = 0
+          pass()
+        }, 16)
+      }
+      pass()
+      // Streaming answers add text and markdown nodes on every token; only a
+      // batch that brings a menu or a message row in is worth a pass.
+      // The host reuses one menu node and swaps its rows when a submenu opens,
+      // so the rows themselves are relevant too, not only a new menu.
+      const RELEVANT =
+        '[role="menu"],[role="menuitem"],[role="menuitemradio"],[data-turn-tail],[data-chat-flow-kind="user"],[class*="_actions"]'
+      const observer = new MutationObserver((records) => {
+        if (timer) return
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node.nodeType !== 1) continue
+            if (node.matches(RELEVANT) || node.querySelector(RELEVANT)) {
+              schedule()
+              return
+            }
+          }
+        }
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+      return () => {
+        observer.disconnect()
+        if (timer) clearTimeout(timer)
+        actions.dispose()
+        for (const node of document.querySelectorAll('[data-kat-effort]')) node.remove()
+        for (const node of document.querySelectorAll('[data-kat-effort-menu]')) node.removeAttribute('data-kat-effort-menu')
+      }
+    }
+
+    /* Styles for everything forked from claude-style. Host markup only:
+       stable data attributes and aria labels first, CSS-module class
+       prefixes (`[class*="_name"]`) only where the host offers nothing else. */
+    const FEATURES_CSS = `
+/* ---- Effort slider ---- */
+${K} [data-kat-effort-menu]{min-width:min(280px,calc(100vw - 16px))}
+${K} .kat-effort{display:flex;flex-direction:column;gap:6px;padding:10px 10px 8px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l1,#1f1f1f);font-family:var(--kat-font-mono)}
+${K} .kat-effort-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:12px;line-height:16px}
+${K} .kat-effort-title{color:var(--dsw-alias-label-tertiary,#8a8a8a);letter-spacing:.06em;text-transform:uppercase;font-size:10.5px}
+${K} .kat-effort-value{color:var(--dsw-alias-brand-primary,#7dd3fc)}
+${K} .kat-effort-track{position:relative;height:28px;margin:0 8px;cursor:pointer;touch-action:none;outline:none}
+${K} .kat-effort-track::before{content:"";position:absolute;left:-8px;right:-8px;top:50%;height:4px;margin-top:-2px;background:var(--dsw-alias-bg-layer-3,#191a1d);border:1px solid var(--dsw-alias-border-l1,#2a2b31)}
+${K} .kat-effort-fill{position:absolute;left:-8px;top:50%;height:4px;margin-top:-2px;background:var(--dsw-alias-brand-primary,#7dd3fc);transition:width .18s cubic-bezier(.34,1.56,.64,1)}
+${K} .kat-effort-ticks{position:absolute;inset:0;pointer-events:none}
+${K} .kat-effort-tick{position:absolute;top:50%;width:2px;height:8px;margin:-4px 0 0 -1px;background:var(--dsw-alias-label-dimmed,#4a4b53)}
+${K} .kat-effort-knob{position:absolute;top:50%;width:12px;height:20px;margin:-10px 0 0 -6px;background:var(--dsw-alias-label-primary,#f2f2f2);border:1px solid var(--dsw-alias-bg-base,#0b0b0c);transition:left .18s cubic-bezier(.34,1.56,.64,1),transform .12s ease}
+${K} .kat-effort[data-dragging] .kat-effort-knob{transform:scale(1.15);transition:transform .12s ease}
+${K} .kat-effort[data-dragging] .kat-effort-fill{transition:none}
+${K} .kat-effort-track:focus-visible .kat-effort-knob{outline:2px solid var(--dsw-alias-brand-primary,#7dd3fc);outline-offset:2px}
+${K} .kat-effort-ends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dsw-alias-label-dimmed,#6b6b6b)}
+
+/* ---- Permission menu: check the preset in force ---- */
+${K} [role="menu"][data-kat-perm] [role="menuitem"]{position:relative;padding-right:28px}
+${K} [role="menu"][data-kat-perm] [role="menuitem"][data-kat-current]{color:var(--dsw-alias-label-primary,#f2f2f2)}
+${K} [role="menu"][data-kat-perm] [role="menuitem"][data-kat-current]::after{content:"";position:absolute;right:10px;top:50%;width:6px;height:6px;margin-top:-3px;background:var(--dsw-alias-brand-primary,#7dd3fc)}
+${K} button[aria-label^="Access mode"]{font-family:var(--kat-font-mono);font-size:12px}
+
+/* ---- Context ring: thin square-capped ring, mono figure ---- */
+${K} button[aria-label$="of context used"]{font-family:var(--kat-font-mono);font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#a3a3a3)}
+${K} button[aria-label$="of context used"] circle:last-of-type{stroke:var(--dsw-alias-brand-primary,#7dd3fc);stroke-linecap:butt}
+
+/* ---- Turn rail: dashes, the current turn lit ---- */
+${K} nav[aria-label="Turn navigation"] button{width:18px;height:2px;background:var(--dsw-alias-border-l4,#4a4b53);opacity:.7;transition:background-color .15s ease,width .15s ease,opacity .15s ease}
+${K} nav[aria-label="Turn navigation"] button:hover{opacity:1;width:22px}
+${K} nav[aria-label="Turn navigation"] button[aria-current="true"]{background:var(--dsw-alias-brand-primary,#7dd3fc);opacity:1;width:22px}
+
+/* ---- Message actions ---- */
+${K} [data-kat-actions]{display:inline-flex;align-items:center;gap:2px}
+${K} .kat-action{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;background:none;color:var(--dsw-alias-label-tertiary,#8a8a8a);cursor:pointer}
+${K} .kat-action:hover{background:var(--dsw-alias-interactive-bg-hover,#161616);color:var(--dsw-alias-label-primary,#f2f2f2)}
+${K} .kat-action:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#7dd3fc);outline-offset:-2px}
+${K} .kat-editor{display:flex;flex-direction:column;gap:8px;margin-top:8px;padding:10px;background:var(--dsw-alias-bg-layer-2,#141417);border:1px solid var(--dsw-alias-border-l3,#3a3b42)}
+${K} .kat-editor-input{width:100%;box-sizing:border-box;resize:vertical;min-height:48px;padding:8px;background:var(--dsw-alias-bg-base,#0b0b0c);color:var(--dsw-alias-label-primary,#f2f2f2);border:1px solid var(--dsw-alias-border-l1,#2a2b31);font:inherit;caret-color:var(--dsw-alias-brand-primary,#7dd3fc)}
+${K} .kat-editor-row{display:flex;justify-content:flex-end;gap:8px}
+${K} .kat-editor-row button{padding:6px 12px;border:1px solid var(--dsw-alias-border-l3,#3a3b42);background:none;color:var(--dsw-alias-label-secondary,#a3a3a3);font-family:var(--kat-font-mono);font-size:12px;cursor:pointer}
+${K} .kat-editor-row .kat-editor-save{background:var(--dsw-alias-brand-primary,#7dd3fc);border-color:var(--dsw-alias-brand-primary,#7dd3fc);color:var(--dsw-alias-brand-text,#04121a)}
+${K} .kat-editor-row .kat-editor-save:disabled{opacity:.4;cursor:default}
+
+/* ---- Process summary rows ("2 thoughts, 3 tool calls"): one mono line ---- */
+${K} button[data-process-activity]{font-family:var(--kat-font-mono);font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,#8a8a8a)}
+${K} button[data-process-activity]:hover{color:var(--dsw-alias-label-primary,#f2f2f2)}
+
+/* ---- File-op rows: Edit path +n -m ---- */
+${K} :is([data-tool="edit"],[data-tool="write"],[data-tool="read"]) [class*="_title"]{font-family:var(--kat-font-mono);font-size:12px;color:var(--dsw-alias-label-secondary,#a3a3a3)}
+${K} :is([data-tool="edit"],[data-tool="write"]) [class*="_fileLink"]{font-family:var(--kat-font-mono);font-size:12px}
+${K} [class*="_diffAdded"]{color:var(--dsw-alias-state-success-primary,#6ee7a8);font-family:var(--kat-font-mono)}
+${K} [class*="_diffRemoved"]{color:var(--dsw-alias-state-error-primary,#f87171);font-family:var(--kat-font-mono)}
+
+/* ---- Running session rows: a slow sweep across the title ---- */
+@keyframes kat-row-sweep{0%{background-position:150% 0}100%{background-position:-50% 0}}
+${K} [class*="_sessionRow"]:has(svg[data-state="ongoing"]) [class*="_title"]{
+  background:linear-gradient(90deg,var(--dsw-alias-label-secondary,#a3a3a3) 40%,var(--dsw-alias-label-primary,#f2f2f2) 50%,var(--dsw-alias-label-secondary,#a3a3a3) 60%) 0 0/200% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:kat-row-sweep 2.4s linear infinite;
+}
+
+/* ---- Sidebar search: a standing field, not a hidden icon ---- */
+${K} [class*="_sectionHeader"]:has(> [class*="_searchSlot"]){flex-wrap:wrap;row-gap:6px;justify-content:space-between}
+${K} [class*="_sectionHeader"]:has(> [class*="_searchSlot"]) > [class*="_sectionLabel"]{margin-right:auto}
+${K} [class*="_search"]:has(> [class*="_searchInput"]){width:100%;height:30px;border:1px solid var(--dsw-alias-border-l1,#2a2b31);background:var(--dsw-alias-bg-layer-1,#101012)}
+${K} [class*="_searchSlot"]{order:9;flex:1 0 100% !important;max-width:100% !important;margin-left:0 !important}
+${K} [class*="_searchInput"]{font-family:var(--kat-font-mono);font-size:12px;opacity:1 !important;width:100% !important;pointer-events:auto !important}
+${K} [class*="_search"]:focus-within{border-color:var(--dsw-alias-brand-primary,#7dd3fc)}
+
+/* ---- Sidebar footer: one compact band ---- */
+${K} [class*="_footArea"]{border-top:1px solid var(--dsw-alias-border-l1,#1f1f1f);padding-block:6px !important;gap:4px;font-family:var(--kat-font-mono);font-size:11.5px}
+${K} [class*="_footArea"] button{min-height:28px}
+
+/* ---- Chat reveal: new answer blocks settle in ---- */
+@keyframes kat-reveal{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+${K}[data-kat-reveal] [data-chat-flow-kind="assistant-step"]:last-child{animation:kat-reveal .22s ease-out both}
+
+/* ---- Typing caret: accent coloured in every field ---- */
+${K} :is([data-composer-input],textarea,input){caret-color:var(--dsw-alias-brand-primary,#7dd3fc)}
+
+/* ---- Phone: light motion and thumb-sized targets ----
+   Decorative loops, reveals and blur are paint every frame on a weak GPU;
+   they stop here. The orb keeps moving (at a reduced rate, set in JS) and
+   real progress indicators keep spinning, so state is never hidden. */
+${K}[data-kat-mobile] [class*="_sessionRow"] [class*="_title"]{animation:none !important;background:none !important;color:inherit !important}
+${K}[data-kat-mobile] [data-chat-flow-kind]{animation:none !important}
+${K}[data-kat-mobile] *{backdrop-filter:none !important;-webkit-backdrop-filter:none !important}
+${K}[data-kat-mobile] :is(button,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="tab"]){min-height:40px}
+${K}[data-kat-mobile] .kat-action{width:40px;height:40px}
+${K}[data-kat-mobile] .kat-effort-track{height:40px}
+${K}[data-kat-mobile] .kat-effort-knob{width:18px;height:28px;margin:-14px 0 0 -9px}
+${K}[data-kat-mobile] [role="menu"] [role^="menuitem"]{font-size:14px}
+${K}[data-kat-mobile] :where(button,a,input,textarea,select,[role="button"],[role="option"],[role="tab"]){transition:none}
+`
 
     function stylesheet() {
       return `
@@ -967,14 +1555,6 @@ ${K} [data-dsh-boot] [class*="hint"]{
   color:var(--dsw-alias-label-dimmed,#6b6b6b) !important;
 }
 
-/* The composer mascot: claude-style paints a spritesheet whale above the
-   prompt box and hangs a click bubble off the same host. The sprite is hidden
-   and the orb drawn in its place; the host element and its hit area stay, so
-   the bubble keeps working. */
-${K} .dsh-claude-deepy-sprite{
-  opacity:0 !important;
-  visibility:hidden !important;
-}
 ${K} [data-kat-orb-deepy]{
   z-index:2;
 }
@@ -992,50 +1572,7 @@ ${K} [class*="slot"]:has(> [data-slot="sidebar.session.row.leading"]:empty){
   overflow:hidden !important;
 }
 
-/* Effort picker, list form: the host vertical radio menu becomes a
-   horizontal segmented bar. The sliding pill is injected by the enhancer in
-   apply(); with no JavaScript the checked option still carries the accent
-   text colour, so the bar degrades rather than breaking. */
-${K} [data-kat-effort-bar]{
-  display:flex;flex-direction:row;align-items:stretch;gap:0;
-  min-width:min(348px,calc(100vw - 16px));
-}
-${K} [data-kat-effort-bar] [role="menuitemradio"]{
-  flex:1 1 0;min-width:0;position:relative;z-index:1;padding:8px 2px;text-align:center;
-  font-size:12px;transition:color .18s ease;
-}
-${K} [data-kat-effort-bar] [role="menuitemradio"][aria-checked="true"]{
-  color:var(--dsw-alias-label-primary,#f2f2f2);
-}
-${K} [data-kat-effort-bar] [role="menuitemradio"]:focus-visible{
-  outline:2px solid var(--dsw-alias-brand-primary,#7dd3fc);
-  outline-offset:-2px;
-}
-${K} .kat-effort-pill{
-  position:absolute;left:0;top:0;z-index:0;pointer-events:none;
-  background:var(--dsw-alias-interactive-bg-hover-accent,#7dd3fc29);
-  border:1px solid var(--dsw-alias-brand-primary,#7dd3fc);
-  transition:transform .28s cubic-bezier(.34,1.56,.64,1),width .28s cubic-bezier(.34,1.56,.64,1);
-}
-
-/* Effort picker, slider form (apex models): accent fill on a hairline
-   track, LED ticks, and a knob that travels with an overshoot ease so it
-   settles with a pop instead of gliding flat. */
-${K} .dsh-claude-effort-track:before{
-  background:var(--dsw-alias-bg-layer-1,#0a0a0a);
-  border:1px solid var(--dsw-alias-border-l1,#1f1f1f);
-}
-${K} .dsh-claude-effort-fill{
-  background:var(--dsw-alias-brand-primary,#7dd3fc);
-  transition:width .22s cubic-bezier(.34,1.56,.64,1),opacity .18s ease;
-}
-${K} .dsh-claude-effort-knob{
-  background:var(--dsw-alias-bg-layer-3,#131313);
-  border:1px solid var(--dsw-alias-border-l3,#2a2a2a);
-  box-shadow:0 1px 3px #0000008c;
-  transition:translate .22s cubic-bezier(.34,1.56,.64,1),scale .12s ease,background-color .3s ease,box-shadow .3s ease;
-}
-${K} .dsh-claude-effort-tick{background:var(--dsw-alias-label-tertiary,#8a8a8a)}
+${FEATURES_CSS}
 
 @media (prefers-reduced-motion: reduce){
   html:root body[data-kat-theme] *,
@@ -1218,6 +1755,8 @@ ${K} [data-conversation-tabs] > button:focus-visible{
 
     const SWITCHES = [
       'data-kat-theme',
+      'data-kat-reveal',
+      'data-kat-mobile',
       'data-kat-motion',
       'data-kat-density',
       'data-kat-prose',
@@ -1241,9 +1780,16 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       const store = typeof localStorage === 'undefined' ? null : localStorage
       const prefs = readPrefs(store)
       const body = document.body
+      const mobile = isMobilePage(
+        globalThis,
+        (query) => typeof matchMedia === 'function' && matchMedia(query).matches,
+      )
+      if (mobile) orbFrameMs = MOBILE_ORB_FRAME_MS
 
       const paint = () => {
         body.setAttribute('data-kat-theme', '')
+        if (mobile) body.setAttribute('data-kat-mobile', '')
+        else body.setAttribute('data-kat-reveal', '')
         body.setAttribute('data-kat-motion', prefs.motion)
         body.setAttribute('data-kat-density', prefs.density)
         body.setAttribute('data-kat-prose', prefs.prose)
@@ -1293,114 +1839,9 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       document.head.appendChild(sheet)
       const disposeSheet = () => sheet.remove()
 
-      // Effort picker, list form: a MutationObserver finds the host's effort
-      // radio menu, marks it, and keeps a sliding pill under the checked
-      // option. Presentational only: clicks and keyboard still run through
-      // the native menuitems.
-      //
-      // The matcher is deliberately strict. The model list is a menu of
-      // around a thousand menuitemradios whose names contain effort words
-      // ("o3 Mini High"), so a substring check laid the model selector out as
-      // a bar and broke it. A menu qualifies only when the permission
-      // popover does not own it, every radio label matches an effort label
-      // exactly, and the list is small. If a marked menu stops qualifying
-      // (for example the host swaps in other content), the bar takes itself
-      // off instead of staying on the wrong control.
-      const EFFORT_LABEL = /^(default|off|low|medium|high|max)$/i
-      const stopEffortBars = (() => {
-        try {
-          if (typeof MutationObserver === 'undefined') return () => {}
-          if (!document || typeof document.querySelectorAll !== 'function' || !document.body) return () => {}
-
-          const marked = new WeakSet()
-          const qualifies = (menu, radios) =>
-            radios.length > 0 &&
-            radios.length <= 12 &&
-            !(menu.closest && menu.closest('.dsh-claude-perm-popover')) &&
-            radios.every((r) => EFFORT_LABEL.test((r.textContent || '').trim()))
-          const unmark = (menu) => {
-            marked.delete(menu)
-            menu.removeAttribute('data-kat-effort-bar')
-            const pill = menu.querySelector('.kat-effort-pill')
-            if (pill) pill.remove()
-          }
-          const paint = (menu) => {
-            if (!menu || menu.isConnected === false) return
-            const radios = [...menu.querySelectorAll('[role="menuitemradio"]')]
-            if (!qualifies(menu, radios)) {
-              if (marked.has(menu)) unmark(menu)
-              return
-            }
-            if (!marked.has(menu)) {
-              marked.add(menu)
-              menu.setAttribute('data-kat-effort-bar', '')
-            }
-            let pill = menu.querySelector('.kat-effort-pill')
-            if (!pill) {
-              pill = document.createElement('div')
-              pill.className = 'kat-effort-pill'
-              pill.setAttribute('aria-hidden', 'true')
-              menu.appendChild(pill)
-            }
-            const active = radios.find((r) => r.getAttribute('aria-checked') === 'true')
-            if (!active) {
-              if (pill.style.opacity !== '0') pill.style.opacity = '0'
-              return
-            }
-            const next = {
-              transform: `translate(${active.offsetLeft}px, ${active.offsetTop}px)`,
-              width: `${active.offsetWidth}px`,
-              height: `${active.offsetHeight}px`,
-              opacity: '1',
-            }
-            // Write only on change: the observer watches mutations, so an
-            // unconditional write would retrigger itself forever.
-            for (const [key, value] of Object.entries(next)) {
-              if (pill.style[key] !== value) pill.style[key] = value
-            }
-          }
-          const repaint = () => {
-            for (const menu of document.querySelectorAll('[role="menu"]')) {
-              try {
-                paint(menu)
-              } catch {
-                /* one bad menu must not break the rest */
-              }
-            }
-          }
-          repaint()
-          // Streaming replies mutate the body many times a frame; one repaint
-          // per frame is enough and keeps the observer off the scroll path.
-          let pending = 0
-          const scheduleRepaint = () => {
-            if (pending) return
-            pending = requestAnimationFrame(() => {
-              pending = 0
-              repaint()
-            })
-          }
-          const observer = new MutationObserver(scheduleRepaint)
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['aria-checked', 'class', 'style'],
-          })
-          return () => {
-            observer.disconnect()
-            if (pending) cancelAnimationFrame(pending)
-            for (const menu of document.querySelectorAll('[data-kat-effort-bar]')) {
-              try {
-                unmark(menu)
-              } catch {
-                /* already gone */
-              }
-            }
-          }
-        } catch {
-          return () => {}
-        }
-      })()
+      // Everything forked from claude-style: one batched observer drives the
+      // effort slider, permission check marks, row shimmer and message actions.
+      const stopFeatures = installFeatures(ctx)
 
       // Thinking orbs: the boot splash and every working-session row. The
       // host keeps its own spinner node (it owns the layout), so the canvas is
@@ -1414,6 +1855,10 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           if (!document.body) return () => {}
 
           const live = []
+          // The composer orb sits on the card's top-right corner, where the
+          // claude-style mascot used to stand; 56px reads as a presence there
+          // without covering the transcript.
+          const COMPOSER_ORB_SIZE = 56
           const done = new WeakSet()
 
           const mountBootOrb = () => {
@@ -1471,45 +1916,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             }
           }
 
-          // claude-style already knows what the agent is doing: it marks the
-          // mascot with data-animation. Reading that is what makes the orb
-          // correspond to the model's state instead of spinning generically.
-          const STATE_FOR_ANIMATION = {
-            building: 'working',
-            typing: 'wave',
-            thinking: 'reasoning',
-            loading: 'scan',
-            idle: 'waiting',
-          }
-
-          // The transcript tags every tool call with data-tool. While one is
-          // in flight, that name is the most specific thing the orb can say.
-          const TOOL_STATES = [
-            [/search/, 'scan'],
-            [/fetch|http|web/, 'fetch'],
-            [/bash|shell|exec|terminal|command/, 'working'],
-            [/read|write|edit|grep|glob|list|file|patch/, 'reading'],
-            [/image|generate|video/, 'reasoning'],
-          ]
-          const toolState = (name) => {
-            for (const [pattern, state] of TOOL_STATES) if (pattern.test(name)) return state
-            return 'working'
-          }
-
-          const activityState = () => {
-            const running = document.querySelector(
-              '[data-tool][data-state="running"],[data-tool][data-state="pending"],[data-tool][aria-busy="true"]',
-            )
-            if (running) return toolState((running.getAttribute('data-tool') || '').toLowerCase())
-            const deepy = document.querySelector('.dsh-claude-deepy')
-            if (deepy) {
-              const anim = STATE_FOR_ANIMATION[deepy.getAttribute('data-animation') || '']
-              if (anim) return anim
-            }
-            // claude-style unmounts the mascot while a turn builds, so its
-            // absence is itself the "working" signal.
-            return 'working'
-          }
+          const activityState = () => readActivity(document)
 
           let composerOrb = null
           let composerAnchorEl = null
@@ -1571,7 +1978,6 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           const mountComposerOrb = () => {
             const anchor = composerAnchor()
             if (!anchor) return
-            const deepy = document.querySelector('.dsh-claude-deepy')
             if (composerOrb && composerOrb.element.isConnected) {
               if (composerOrb.element.parentElement !== anchor) anchor.appendChild(composerOrb.element)
               placeComposerOrb(composerOrb.element)
@@ -1587,8 +1993,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               }
               composerOrb = null
             }
-            const smooth = deepy && deepy.getBoundingClientRect ? deepy.getBoundingClientRect() : null
-            const orb = createOrb(smooth && smooth.width ? Math.round(smooth.width * 0.86) : 89, 'Thinking orb', {
+            const orb = createOrb(COMPOSER_ORB_SIZE, 'Thinking orb', {
               playful: true,
               state: activityState(),
             })
@@ -1664,18 +2069,8 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           // added/removed subtrees and the attributes this feature reacts to.
           const scanAdded = (node, flags) => {
             if (!node || node.nodeType !== 1) return
-            if (
-              node.matches?.('[data-composer-card]') ||
-              node.matches?.('.dsh-claude-deepy') ||
-              node.querySelector?.('[data-composer-card],.dsh-claude-deepy')
-            ) {
+            if (node.matches?.('[data-composer-card]') || node.querySelector?.('[data-composer-card]')) {
               flags.composer = true
-            }
-            if (
-              node.matches?.('[data-tool],[data-state="running"],[aria-busy="true"]') ||
-              node.querySelector?.('[data-tool],[data-state="running"],[aria-busy="true"]')
-            ) {
-              flags.state = true
             }
             if (node.matches?.('svg[data-state="ongoing"]')) mountRowOrb(node)
             for (const svg of node.querySelectorAll?.('svg[data-state="ongoing"]') || []) mountRowOrb(svg)
@@ -1693,9 +2088,6 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
                 if (record.attributeName === 'data-state') {
                   if (target.matches?.('[data-state="done"],[data-state="warning"]')) mountStatusOrb(target)
                   else if (target.matches?.('svg[data-state="ongoing"]')) mountRowOrb(target)
-                  flags.state = true
-                } else if (record.attributeName === 'data-animation') {
-                  flags.state = true
                 }
                 continue
               }
@@ -1717,10 +2109,26 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             try {
               prune()
               if (flags.composer) mountComposerOrb()
-              else if (composerOrb && flags.state) composerOrb.setState(activityState())
             } catch {
               /* one bad node must not stop the rest */
             }
+            scheduleState()
+          }
+
+          // Any batch can start, advance or end a turn (the running marker
+          // comes and goes as a node, reasoning turns into a response, a tool
+          // finishes), so the state is re-read once per frame after mutations
+          // rather than guessed from which nodes changed. setState is a no-op
+          // when the state holds. A timer, not a frame: frames stop while the
+          // window is hidden or occluded, and the state must still be right
+          // when the user looks back.
+          let stateTimer = 0
+          const scheduleState = () => {
+            if (stateTimer || !composerOrb) return
+            stateTimer = setTimeout(() => {
+              stateTimer = 0
+              if (composerOrb) composerOrb.setState(activityState())
+            }, 120)
           }
 
           let observer = null
@@ -1730,7 +2138,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
               childList: true,
               subtree: true,
               attributes: true,
-              attributeFilter: ['data-animation', 'data-state'],
+              attributeFilter: ['data-state', 'data-chat-group-part'],
             })
           }
 
@@ -1741,6 +2149,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
 
           return () => {
             if (observer) observer.disconnect()
+            if (stateTimer) clearTimeout(stateTimer)
             if (cardObserver) cardObserver.disconnect()
             if (typeof removeEventListener === 'function') removeEventListener('resize', onResize)
             if (composerOrb) {
@@ -1803,7 +2212,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
       ctx.effect(
         () => () => {
           offTheme()
-          stopEffortBars()
+          stopFeatures()
           stopOrbs()
           disposeLayer()
           disposeSheet()
@@ -1812,7 +2221,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
         'custom-dsh-theme: palette, sheet and body switches',
       )
 
-      globalThis.__KAT_THEME__ = { SOURCE, prefs, setAccent, setPref, reset, orbDots }
+      globalThis.__KAT_THEME__ = { SOURCE, prefs, setAccent, setPref, reset, orbDots, readActivity, effort, isMobilePage }
 
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(

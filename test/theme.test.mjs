@@ -694,89 +694,6 @@ test('the session spinner is a small hollow square spinner, and survives calm an
   )
 })
 
-test('the effort picker becomes a sliding segmented bar with accent fill and spring knob', async () => {
-  const { calls } = await boot()
-  const css = calls.css.join('\n')
-
-  const bar = rules(css).filter((r) => /\[data-kat-effort-bar\]/.test(r.selector))
-  assert.ok(bar.length > 0, 'the effort bar layout must be scoped to the enhanced menu')
-  assert.ok(
-    bar.some((r) => /display:\s*flex/.test(r.body) && /flex-direction:\s*row/.test(r.body)),
-    'effort options must lay out as a horizontal bar, not the host vertical list',
-  )
-  assert.ok(
-    bar.some((r) => /min-width:\s*0/.test(r.body)),
-    'the host sets min-width:100% on rows; without min-width:0 the segments cannot shrink and overflow',
-  )
-  assert.ok(
-    bar.some((r) => /min-width:\s*min\(3[0-9]{2}px/.test(r.body)),
-    'the bar must be wide enough for the longest label; at host width "Default" ellipsizes',
-  )
-
-  const pill = rules(css).filter((r) => /\.kat-effort-pill/.test(r.selector))
-  assert.ok(pill.length > 0, 'the sliding indicator must exist')
-  assert.ok(
-    pill.some((r) => /transition:[^;]*transform/.test(r.body) && /cubic-bezier/.test(r.body)),
-    'the indicator must slide (transform transition) with an eased curve',
-  )
-  assert.ok(
-    pill.some((r) => /pointer-events:\s*none/.test(r.body)),
-    'the indicator must never intercept clicks meant for the options',
-  )
-
-  const fill = rules(css).filter((r) => /\.dsh-claude-effort-fill/.test(r.selector))
-  assert.ok(
-    fill.some((r) => /var\(--dsw-alias-brand-primary/.test(r.body)),
-    'the slider fill must carry the theme accent',
-  )
-
-  const knob = rules(css).filter((r) => /\.dsh-claude-effort-knob/.test(r.selector))
-  assert.ok(
-    knob.some((r) => /translate[^;]*cubic-bezier\([^)]*,\s*1\.\d+/.test(r.body)),
-    'the knob must travel with an overshoot ease so it settles with a pop',
-  )
-})
-
-test('the effort enhancer can only match the effort list, and undoes itself if content changes', async () => {
-  await boot()
-  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  assert.match(
-    src,
-    /const EFFORT_LABEL = \/\^\([a-z|]+\)\$\/i/,
-    'effort labels must match exactly; a substring match hits model names like "o3 Mini High" and lays the model list out as a bar',
-  )
-  assert.ok(
-    /\.every\(/.test(src),
-    'every radio in the menu must be an effort label, so the thousand-row model list can never qualify',
-  )
-  assert.ok(
-    /dsh-claude-perm-popover/.test(src),
-    'the enhancer must explicitly exclude the permission popover from the bar treatment',
-  )
-  assert.ok(
-    /menuitemradio/.test(src),
-    'the enhancer must key on menuitemradio options, not the model list items',
-  )
-  assert.ok(
-    /removeAttribute\('data-kat-effort-bar'\)/.test(src),
-    'if a menu stops being the effort list, the enhancer must take the bar off instead of leaving it on the model selector',
-  )
-})
-
-test('the effort enhancer repaints at most once per frame, not once per mutation', async () => {
-  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  const start = src.indexOf('const stopEffortBars')
-  const block = src.slice(start, src.indexOf('const disposeEffort', start) > 0 ? src.indexOf('const disposeEffort', start) : start + 4000)
-  assert.ok(
-    /new MutationObserver\(scheduleRepaint\)/.test(block),
-    'the body-wide observer fires on every streamed token; it must schedule a repaint, not run one',
-  )
-  assert.ok(
-    /requestAnimationFrame\(/.test(block) && /cancelAnimationFrame\(/.test(block),
-    'repaints must be coalesced into one animation frame and cancelled on dispose',
-  )
-})
-
 /* ---- Substrate choice ---------------------------------------------------- */
 
 test('the black substrate is a setting: amoled, soft and warm', async () => {
@@ -898,20 +815,14 @@ test('the boot screen gets its own orb while the harness loads', async () => {
 
 /* ---- Playful composer orb, and the sidebar's dead space ------------------ */
 
-test('the composer mascot is replaced by the orb, and its bubble still works', async () => {
+test('the composer orb stands on its own, without a claude-style mascot', async () => {
   await boot()
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
-  assert.ok(
-    /dsh-claude-deepy/.test(src),
-    'the mascot on the composer stack is .dsh-claude-deepy; that is what the orb replaces',
-  )
-  assert.ok(
-    /dsh-claude-deepy-sprite/.test(src),
-    'only the sprite may be hidden: removing the host would take the mascot bubble and its click target with it',
-  )
+  assert.ok(!/dsh-claude-deepy/.test(src), 'the orb must not wait for or size itself from a mascot that may be off')
+  assert.match(src, /COMPOSER_ORB_SIZE = \d+/, 'the composer orb needs its own size')
   assert.ok(
     /data-kat-orb-deepy/.test(src),
-    'the composer orb needs its own marker so teardown and the sprite hide target the same node',
+    'the composer orb keeps its marker so teardown and styling target the same node',
   )
 })
 
@@ -1018,7 +929,7 @@ test('the effort matcher accepts the labels the host actually renders', async ()
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   const line = src.split('\n').find((l) => l.includes('EFFORT_LABEL'))
   assert.ok(line, 'the matcher must exist')
-  for (const label of ['off', 'max', 'default', 'low', 'high']) {
+  for (const label of ['off', 'max', 'default', 'low', 'high', 'xhigh']) {
     assert.match(line, new RegExp(label, 'i'), `the host renders "${label}"; a matcher without it silently drops the bar`)
   }
   // Still exact-match, every-radio: "o3 Mini High" must never qualify.
@@ -1096,20 +1007,10 @@ test('the mascot orb switches state from the host and reacts to a poke', async (
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
 
   assert.ok(
-    /data-animation/.test(src),
-    'claude-style marks the mascot with data-animation (typing/building/...); that is the state signal',
+    /data-chat-running/.test(src),
+    'the host marks a live turn with data-chat-running; that is the state signal, not a theme mascot',
   )
-  for (const [value, state] of [
-    ['building', 'working'],
-    ['typing', 'wave'],
-    ['thinking', 'scan'],
-  ]) {
-    assert.match(
-      src,
-      new RegExp(`${value}[\\s\\S]{0,80}${state}`),
-      `${value} must map to the ${state} state, or the orb ignores what the agent is doing`,
-    )
-  }
+  assert.ok(!/dsh-claude-deepy/.test(src), 'the orb must not depend on claude-style mascot nodes')
   assert.ok(/pointerdown/.test(src), 'the orb must react to a click, since the mascot bubble is inert here')
   assert.ok(/setState/.test(src), 'the orb must switch state in place instead of being recreated')
   assert.ok(/title/.test(src), 'the orb must expose the current state on hover')
@@ -1233,4 +1134,182 @@ test('a click shoves the particles instead of only sparking', async () => {
     return after - before
   })
   assert.ok(growth.every((g) => g > 0), 'particles must be pushed outward')
+})
+
+/* ---- Orb state comes from the transcript, not the mascot ----------------- */
+
+/**
+ * A tiny DOM for the state reader: each selector the reader asks about maps
+ * to a canned element, so tests describe the page in terms of what is on it.
+ */
+function fakePage(spec) {
+  const el = (attrs = {}, text = '') => ({
+    getAttribute: (k) => (k in attrs ? attrs[k] : null),
+    hasAttribute: (k) => k in attrs,
+    textContent: text,
+  })
+  return {
+    querySelector(sel) {
+      for (const [pattern, value] of spec) if (sel.includes(pattern)) return value ? el(value.attrs, value.text) : null
+      return null
+    },
+    querySelectorAll(sel) {
+      for (const [pattern, value] of spec) {
+        if (sel.includes(pattern) && Array.isArray(value)) return value.map((v) => el(v.attrs, v.text))
+      }
+      return []
+    },
+  }
+}
+
+test('the orb reads idle when no turn is running, even without the mascot', async () => {
+  const { sandbox } = await boot()
+  const read = sandbox.__KAT_THEME__.readActivity
+  assert.equal(typeof read, 'function', 'the activity reader must be exposed for testing')
+  assert.equal(read(fakePage([])), 'waiting', 'an empty composer with no running turn is idle, not working')
+})
+
+test('the orb follows the running turn: reasoning, typing, tool', async () => {
+  const { sandbox } = await boot()
+  const read = sandbox.__KAT_THEME__.readActivity
+  const running = ['data-chat-running', { attrs: { 'data-chat-running': 'true' } }]
+
+  const thinking = fakePage([
+    running,
+    ['data-chat-flow-kind', [{ attrs: { 'data-chat-flow-kind': 'assistant-step', 'data-chat-group-part': 'reasoning' } }]],
+  ])
+  assert.equal(read(thinking), 'reasoning', 'a running turn whose newest block is reasoning must show reasoning')
+
+  const typing = fakePage([
+    running,
+    ['data-chat-flow-kind', [{ attrs: { 'data-chat-flow-kind': 'assistant-step', 'data-chat-group-part': 'response' } }]],
+  ])
+  assert.equal(read(typing), 'wave', 'a running turn writing its answer must show the typing wave')
+
+  const tool = fakePage([
+    running,
+    ['data-tool][data-state="running"', { attrs: { 'data-tool': 'grep', 'data-state': 'running' } }],
+  ])
+  assert.equal(read(tool), 'reading', 'an in-flight grep reads files')
+
+  const fetching = fakePage([
+    running,
+    ['data-tool][data-state="running"', { attrs: { 'data-tool': 'web_fetch', 'data-state': 'running' } }],
+  ])
+  assert.equal(read(fetching), 'fetch')
+
+  const between = fakePage([
+    running,
+    ['data-chat-flow-kind', [{ attrs: { 'data-chat-flow-kind': 'tool-call' } }]],
+  ])
+  assert.equal(read(between), 'reasoning', 'after a tool finishes the model is thinking, not idle-working')
+})
+
+test('the orb does not claim work from a finished tool or an idle stop button', async () => {
+  const { sandbox } = await boot()
+  const read = sandbox.__KAT_THEME__.readActivity
+  const done = fakePage([['data-chat-flow-kind', [{ attrs: { 'data-chat-flow-kind': 'tool-call' } }]]])
+  assert.equal(read(done), 'waiting', 'tool rows from finished turns must not make the orb busy')
+})
+
+/* ---- Effort slider (forked from claude-style, model picker excluded) ------ */
+
+test('the effort slider maps any host effort list onto evenly spaced steps', async () => {
+  const { sandbox } = await boot()
+  const effort = sandbox.__KAT_THEME__.effort
+  assert.equal(typeof effort, 'object', 'the slider maths must be exposed for testing')
+  const labels = ['Default', 'Low', 'Medium', 'High', 'Xhigh', 'Max']
+  assert.equal(effort.indexAt(0, labels.length), 0)
+  assert.equal(effort.indexAt(1, labels.length), labels.length - 1)
+  assert.equal(effort.indexAt(0.49, labels.length), 2, 'the slider snaps to the nearest step')
+  assert.equal(effort.indexAt(-3, labels.length), 0, 'a drag past the left end clamps')
+  assert.equal(effort.indexAt(9, labels.length), labels.length - 1, 'a drag past the right end clamps')
+  assert.equal(effort.fractionOf(0, 6), 0)
+  assert.equal(effort.fractionOf(5, 6), 1)
+  assert.equal(effort.fractionOf(0, 1), 0, 'a single option sits at the start, never NaN')
+})
+
+test('the effort slider recognises the host effort menu, including Xhigh, and never the model list', async () => {
+  const { sandbox } = await boot()
+  const effort = sandbox.__KAT_THEME__.effort
+  assert.ok(effort.isEffortList(['Default', 'Low', 'Medium', 'High', 'Xhigh', 'Max']), 'Xhigh is a real host level')
+  assert.ok(effort.isEffortList(['Low', 'Medium', 'High']))
+  assert.ok(!effort.isEffortList(['o3 Mini High', 'Claude Opus 5.5']), 'model names must never qualify')
+  assert.ok(!effort.isEffortList([]), 'an empty menu is not an effort list')
+  assert.ok(!effort.isEffortList(Array(13).fill('Low')), 'a long list is never the effort menu')
+})
+
+test('the effort slider is keyboard and screen reader operable', async () => {
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /role', 'slider'|role: 'slider'|'role', "slider"/, 'the track must be a slider for assistive tech')
+  for (const attr of ['aria-valuemin', 'aria-valuemax', 'aria-valuenow', 'aria-valuetext']) {
+    assert.ok(src.includes(attr), `the slider must expose ${attr}`)
+  }
+  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) {
+    assert.ok(src.includes(`'${key}'`), `${key} must move the slider`)
+  }
+  assert.ok(/setPointerCapture/.test(src), 'a drag must keep tracking when the pointer leaves the track')
+  assert.ok(/touch-action:none/.test(src), 'a touch drag must not scroll the page on mobile')
+})
+
+test('the slider picks by clicking the host radio, so the host stays the source of truth', async () => {
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /menuitemradio[\s\S]{0,400}\.click\(\)/, 'choosing a step must click the host option, not set state itself')
+})
+
+/* ---- The claude-style features this theme now owns ------------------------ */
+
+test('the theme owns every claude-style feature in use, scoped to its own switch', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const owned = [
+    ['permission popover', /\[role="menu"\]\[data-kat-perm\]/],
+    ['context ring', /JObwrW_trigger|aria-label\$="of context used"/],
+    ['turn rail', /aria-label="Turn navigation"/],
+    ['message actions', /data-kat-actions/],
+    ['process summary', /data-process-activity/],
+    ['file-op rows', /data-tool="edit"|o3BgMG_diffAdded|diffAdded/],
+    ['running row shimmer', /kat-row-sweep/],
+    ['sidebar search', /searchInput/],
+    ['footer', /footArea/],
+    ['chat reveal', /data-kat-reveal/],
+    ['typing caret', /caret-color/],
+    ['effort slider', /\.kat-effort\b/],
+  ]
+  for (const [name, re] of owned) assert.match(css, re, `the stylesheet must carry the ${name}`)
+  assert.ok(!/body\[data-dsh-claude-style\]/.test(css), 'nothing may wait on claude-style being installed')
+})
+
+test('message actions fork the session through host services, never by scraping', async () => {
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /\.fork\(\{\s*sessionId[\s\S]{0,80}atSeq/, 'rewind/edit/rerun must fork at the message seq')
+  assert.match(src, /openSession/, 'the fork must open in the workspace')
+  assert.match(src, /setDraft/, 'edit and retract must hand the text back to the composer')
+  for (const label of ['Retract this message', 'Edit this message', 'Run this turn again', 'Delete this turn']) {
+    assert.ok(src.includes(label), `the ${label} action must exist`)
+  }
+})
+
+/* ---- Mobile: light motion by default ------------------------------------- */
+
+test('the phone page is detected and marked, so mobile rules apply only there', async () => {
+  const { sandbox } = await boot()
+  const detect = sandbox.__KAT_THEME__.isMobilePage
+  assert.equal(typeof detect, 'function')
+  assert.equal(detect({ __DSH_MOBILE_FRONTEND__: 'dedicated' }, () => false), true, 'the dsh-mobile app page is mobile')
+  assert.equal(detect({}, (q) => q === '(pointer: coarse)'), true, 'a touch-only browser is mobile')
+  assert.equal(detect({}, () => false), false, 'a desktop with a mouse is not')
+})
+
+test('mobile is light motion: slower orb, no sweeps, reveals or blur, bigger targets', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const mobile = rules(css).filter((r) => /\[data-kat-mobile\]/.test(r.selector))
+  assert.ok(mobile.length > 0, 'mobile rules must be scoped to the mobile switch')
+  const body = mobile.map((r) => r.body).join('\n')
+  assert.match(body, /animation:\s*none/, 'decorative loops (row sweep, reveal) must stop on the phone')
+  assert.match(body, /backdrop-filter:\s*none/, 'blur is the most expensive paint on a phone GPU')
+  assert.match(body, /min-height:\s*(4[0-9]|3[6-9])px/, 'tap targets must reach a usable size')
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /MOBILE_ORB_FRAME_MS\s*=\s*(6[0-9]|[7-9][0-9]|1\d\d)/, 'the orb must draw at a reduced rate on the phone')
 })
