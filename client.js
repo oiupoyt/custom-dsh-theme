@@ -1369,7 +1369,17 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
             }
           }
           repaint()
-          const observer = new MutationObserver(repaint)
+          // Streaming replies mutate the body many times a frame; one repaint
+          // per frame is enough and keeps the observer off the scroll path.
+          let pending = 0
+          const scheduleRepaint = () => {
+            if (pending) return
+            pending = requestAnimationFrame(() => {
+              pending = 0
+              repaint()
+            })
+          }
+          const observer = new MutationObserver(scheduleRepaint)
           observer.observe(document.body, {
             childList: true,
             subtree: true,
@@ -1378,6 +1388,7 @@ ${K} .kat-settings-option:focus-visible{outline:2px solid var(--dsw-alias-brand-
           })
           return () => {
             observer.disconnect()
+            if (pending) cancelAnimationFrame(pending)
             for (const menu of document.querySelectorAll('[data-kat-effort-bar]')) {
               try {
                 unmark(menu)

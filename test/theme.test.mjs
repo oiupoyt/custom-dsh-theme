@@ -763,6 +763,20 @@ test('the effort enhancer can only match the effort list, and undoes itself if c
   )
 })
 
+test('the effort enhancer repaints at most once per frame, not once per mutation', async () => {
+  const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const start = src.indexOf('const stopEffortBars')
+  const block = src.slice(start, src.indexOf('const disposeEffort', start) > 0 ? src.indexOf('const disposeEffort', start) : start + 4000)
+  assert.ok(
+    /new MutationObserver\(scheduleRepaint\)/.test(block),
+    'the body-wide observer fires on every streamed token; it must schedule a repaint, not run one',
+  )
+  assert.ok(
+    /requestAnimationFrame\(/.test(block) && /cancelAnimationFrame\(/.test(block),
+    'repaints must be coalesced into one animation frame and cancelled on dispose',
+  )
+})
+
 /* ---- Substrate choice ---------------------------------------------------- */
 
 test('the black substrate is a setting: amoled, soft and warm', async () => {
