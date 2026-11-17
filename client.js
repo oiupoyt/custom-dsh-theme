@@ -1475,6 +1475,11 @@ ${K} [data-composer-card] [class*="_triggerEffort"]{font-size:14px}
 ${K} [class*="_dock"][data-composer-dock]{padding-top:0}
 
 ${K} [data-composer-card] [data-composer-input]{min-height:24px;line-height:24px;padding:0;font-size:14px}
+/* claude pads the scroll wrapper, not the editor: text and placeholder share
+   the same 14px inset, with room on the right for the overlay button */
+${K} [data-composer-card] [data-input-scroll]{padding:7px 36px 7px 14px;box-sizing:border-box}
+${K} [class*="_composerHero"] [data-composer-card] [data-input-scroll]{padding:4px 14px 7px}
+${K} [data-composer-card] [data-input-scroll] [class*="_placeholder"]{left:0;right:0;top:0}
 ${K} [data-composer-card] [class*="_placeholder"]{line-height:24px;font-size:14px}
 ${K} [data-composer-card] [class*="_grow"]{min-height:24px}
 ${K} [data-composer-card] [class*="_row"]{display:flex;flex-wrap:nowrap;justify-content:space-between;align-items:center;padding:0 4px 2px;margin:6px 0 0}

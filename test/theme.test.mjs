@@ -1385,3 +1385,10 @@ test('the port keeps the KAT surface: no radius, no soft shadows from claude', a
   assert.ok(!/border-radius:\s*[1-9]/.test(block), 'no rounded corners in the port')
   assert.ok(!/box-shadow:\s*0\s+(8|10|2)px\s+(24|28|32)px/.test(block), 'no claude soft card shadows')
 })
+
+test('typed text and the placeholder share the composer inset', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const wrap = rules(css).filter((r) => /\[data-composer-card\] \[data-input-scroll\]/.test(r.selector))
+  assert.ok(wrap.some((r) => /padding:7px 36px 7px 14px/.test(r.body.replace(/\s+/g, ' ').replace(/: /g, ':'))), 'the scroll wrapper carries the 14px text inset')
+})
