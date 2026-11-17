@@ -61,6 +61,14 @@ Black, square, mono, quiet.
   the message), and mono styling for the context ring, turn rail, process rows,
   file-op rows, a standing sidebar search field, the footer and the caret. One
   batched observer drives all of it.
+- **claude-style spacing and motion.** Sidebar rows at 28px with 6px inline
+  padding and 13px titles, 12px section labels, 25px prose line height, tight
+  process rows, claude's composer gaps and hero layout, all copied value for
+  value from a live page (243 measured properties match). Square corners, mono
+  chrome and no soft shadows stay. claude's motion (menu drop-in, dialog
+  surface, hero rise, process expand, message enter, diff roll, title shine,
+  row sweep) uses its exact durations and curves and plays only under
+  **Motion: Full**; Calm stays the default.
 - **Phone.** On the dsh-mobile page (or any touch-only browser) the body gets
   `data-kat-mobile`: the orb draws at ~12fps, row sweeps, reveals and blur stop,
   and tap targets grow to 40px.

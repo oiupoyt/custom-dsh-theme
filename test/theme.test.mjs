@@ -387,7 +387,11 @@ test('calm motion is the default and no endless animation survives it', async ()
   const attrs = new Map(calls.attrs)
   assert.equal(attrs.get('data-kat-motion'), 'calm')
 
-  const looping = rules(css).filter((r) => /animation[^;]*\binfinite\b/.test(r.body))
+  // A loop that runs only under Motion: Full is the user's explicit choice;
+  // the default (calm) page must still have none outside progress.
+  const looping = rules(css).filter(
+    (r) => /animation[^;]*\binfinite\b/.test(r.body) && !/\[data-kat-motion="full"\]/.test(r.selector),
+  )
   for (const rule of looping) {
     assert.ok(
       isProgressSelector(rule.selector),
@@ -1312,4 +1316,72 @@ test('mobile is light motion: slower orb, no sweeps, reveals or blur, bigger tar
   assert.match(body, /min-height:\s*(4[0-9]|3[6-9])px/, 'tap targets must reach a usable size')
   const src = await readFile(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(src, /MOBILE_ORB_FRAME_MS\s*=\s*(6[0-9]|[7-9][0-9]|1\d\d)/, 'the orb must draw at a reduced rate on the phone')
+})
+
+/* ---- claude-style spacing and motion, on the KAT surface ----------------- */
+
+function ruleFor(css, re) {
+  return rules(css).filter((r) => re.test(r.selector))
+}
+
+test('claude-style motion tokens are carried with their exact values', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  for (const [token, value] of [
+    ['--kat-dur-feedback', '.12s'],
+    ['--kat-dur-open', '.25s'],
+    ['--kat-dur-enter', '.32s'],
+    ['--kat-dur-roll', '.16s'],
+    ['--kat-ease-settle', 'cubic-bezier(.22,1,.36,1)'],
+    ['--kat-ease-glide', 'cubic-bezier(.22,.61,.36,1)'],
+    ['--kat-ease-roll', 'cubic-bezier(.4,0,.2,1)'],
+  ]) {
+    assert.match(css.replace(/\s/g, ''), new RegExp(`${token.replace(/-/g, '\\-')}:${value.replace(/[().]/g, (c) => '\\' + c)}`), `${token} must be ${value}`)
+  }
+})
+
+test('claude-style sidebar and composer spacing is applied to the host parts', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const expect = [
+    [/_panelRow"\]/, /min-height:28px/, 'panel rows are 28px'],
+    [/_sessionRow"\]/, /min-height:28px/, 'session rows are 28px'],
+    [/_sessionRow"\]/, /padding-inline:6px/, 'session rows pad 6px'],
+    [/_projectRow"\]/, /gap:4px/, 'project rows gap 4px'],
+    [/_newSession"\]/, /margin-bottom:6px/, 'new session sits 6px above the list'],
+    [/_sectionLabel"\]/, /font-size:12px/, 'section labels are 12px'],
+    [/_rowActions"\]/, /gap:6px/, 'row actions gap 6px'],
+    [/_footArea"\]/, /padding-inline:8px/, 'footer pads 8px'],
+    [/O_Ebla_title|\[data-process-activity\]/, /line-height:15px/, 'process rows are tight'],
+    [/_markdown_/, /line-height:25px/, 'prose line height is 25px'],
+    [/_viewArea"\]/, /padding-bottom:40px/, 'the transcript keeps 40px under the last turn'],
+  ]
+  for (const [sel, body, why] of expect) {
+    const hit = ruleFor(css, sel).some((r) => body.test(r.body.replace(/\s/g, '')))
+    assert.ok(hit, why)
+  }
+})
+
+test('the claude motions are ported and gated on Motion: Full', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  for (const name of ['kat-dropdown-in', 'kat-surface-in', 'kat-hero-rise', 'kat-roll-in', 'kat-enter-grow', 'kat-title-shine']) {
+    assert.match(css, new RegExp(`@keyframes ${name}\\b`), `${name} must exist`)
+    const users = rules(css).filter((r) => new RegExp(`animation[^;]*${name}`).test(r.body))
+    assert.ok(users.length > 0, `${name} must be used`)
+    assert.ok(
+      users.every((r) => /\[data-kat-motion="full"\]/.test(r.selector)),
+      `${name} must play only under Motion: Full (Calm stays the default)`,
+    )
+  }
+})
+
+test('the port keeps the KAT surface: no radius, no soft shadows from claude', async () => {
+  const { calls } = await boot()
+  const css = calls.css.join('\n')
+  const start = css.indexOf('/* ---- claude-style spacing')
+  assert.ok(start >= 0, 'the port block must be present')
+  const block = css.slice(start, css.indexOf('/* ---- end claude-style port */'))
+  assert.ok(!/border-radius:\s*[1-9]/.test(block), 'no rounded corners in the port')
+  assert.ok(!/box-shadow:\s*0\s+(8|10|2)px\s+(24|28|32)px/.test(block), 'no claude soft card shadows')
 })
